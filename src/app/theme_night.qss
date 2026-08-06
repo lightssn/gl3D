@@ -1,0 +1,48 @@
+/* 夜间主题 深蓝灰底 青色强调 */
+QMainWindow, QWidget {
+    background: #1b1d23;
+    color: #d7dae0;
+    font-family: "Microsoft YaHei";
+}
+QToolBar {
+    background: #23262e;
+    border-bottom: 1px solid #14161b;
+    spacing: 6px;
+    padding: 4px;
+}
+QToolBar QToolButton, QPushButton {
+    background: #2e323d;
+    color: #d7dae0;
+    border: 1px solid #3a3f4c;
+    border-radius: 4px;
+    padding: 5px 14px;
+}
+QToolBar QToolButton:hover, QPushButton:hover {
+    background: #3a4150;
+    border-color: #4fc3f7;
+}
+QToolBar QToolButton:pressed, QPushButton:pressed {
+    background: #262a33;
+}
+QStatusBar {
+    background: #23262e;
+    border-top: 1px solid #14161b;
+    color: #9aa0ad;
+}
+QMenuBar {
+    background: #23262e;
+    color: #d7dae0;
+}
+QMenuBar::item:selected, QMenu::item:selected {
+    background: #3a4150;
+}
+QMenu {
+    background: #23262e;
+    color: #d7dae0;
+    border: 1px solid #3a3f4c;
+}
+QToolTip {
+    background: #2e323d;
+    color: #d7dae0;
+    border: 1px solid #4fc3f7;
+}
