@@ -16,8 +16,12 @@ public:
     void panLocal(float right, float up, float forward); //键盘WASD平移
     void fitToSphere(const QVector3D& center, float radius); //加载模型后自动取景
 
+    void setOrtho(bool on) { m_ortho = on; } //切换正交投影
+    bool ortho() const { return m_ortho; }
+
     QVector3D target() const { return m_target; }
     float distance() const { return m_distance; }
+    QVector3D eye() const { return position(); } //眼位 操作器拾取射线用
 
 private:
     QVector3D position() const; //由球坐标还原眼位
@@ -27,4 +31,5 @@ private:
     float m_pitch = 0.35f;
     float m_distance = 5.0f;
     float m_radius = 1.0f;       //模型半径 平移速度基准
+    bool m_ortho = false;        //false透视 true正交
 };

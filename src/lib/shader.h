@@ -21,6 +21,8 @@ public:
 
     void setMat4(const char* name, const float* mat) const;
     void setVec3(const char* name, float x, float y, float z) const;
+    void setVec4(const char* name, float x, float y, float z, float w) const;
+    void setFloat(const char* name, float val) const;
     void setInt(const char* name, int val) const;
 
     bool isValid() const { return m_program != 0; }

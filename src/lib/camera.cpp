@@ -19,7 +19,15 @@ QMatrix4x4 Camera::projMatrix(float aspect) const {
     QMatrix4x4 p;
     //近平面随距离自适应 避免大模型近裁剪 小模型深度精度差
     float nearP = std::max(m_distance * 0.01f, 0.001f);
-    p.perspective(45.0f, aspect, nearP, m_distance * 100.0f + 100.0f);
+    float farP = m_distance * 100.0f + 100.0f;
+    if (m_ortho) {
+        //正交视锥高随距离 与透视保持相近取景 滚轮缩放继续生效
+        float halfH = m_distance * 0.5f;
+        float halfW = halfH * aspect;
+        p.ortho(-halfW, halfW, -halfH, halfH, nearP, farP);
+    } else {
+        p.perspective(45.0f, aspect, nearP, farP);
+    }
     return p;
 }
 

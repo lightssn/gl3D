@@ -66,11 +66,12 @@ int main(int argc, char* argv[]) {
     app.setFont(QFont("Microsoft YaHei", 9));
 #endif
 
-    // 全局GL格式 3.3核心+深度+4xMSAA
+    // 全局GL格式 4.6核心+深度+stencil+4xMSAA
     QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
+    fmt.setVersion(4, 6);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setDepthBufferSize(24);
+    fmt.setStencilBufferSize(8); //选中描边用stencil
     fmt.setSamples(4);
     QSurfaceFormat::setDefaultFormat(fmt);
 

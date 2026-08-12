@@ -24,6 +24,12 @@ QToolBar QToolButton:hover, QPushButton:hover {
 QToolBar QToolButton:pressed, QPushButton:pressed {
     background: #262a33;
 }
+/* 禁用按钮文字深灰 夜间暗底压暗 */
+QToolBar QToolButton:disabled, QPushButton:disabled {
+    color: #5a5f6a;
+    background: #262a33;
+    border-color: #2e323d;
+}
 QStatusBar {
     background: #23262e;
     border-top: 1px solid #14161b;

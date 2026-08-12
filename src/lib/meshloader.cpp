@@ -90,7 +90,8 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err) {
 
     QTextStream in(&f);
     SubMesh* cur = nullptr;
-    //(vi,ti,ni)组合→子网格内顶点下标 去重减少显存占用
+
+    //obj顶点去重，(vi,ti,ni)组合→子网格内顶点下标
     std::unordered_map<long long, unsigned int> vertMap;
 
     auto finishVertMap = [&]() {
@@ -254,24 +255,26 @@ bool MeshLoader::loadStl(const QString& path, Mesh& mesh, QString* err) {
     mesh.subMeshes.emplace_back();
     SubMesh& sub = mesh.subMeshes.back();
 
-    //位置量化去重键 相同位置合并顶点以计算平滑法线
+    //顶点去重字典，自定义哈希，值为自定义面索引
     std::unordered_map<long long, unsigned int> vertMap;
+    //xyz float放大为整形(小数5位精度)拼接得到int64(long long)哈希值
     auto keyOf = [](float x, float y, float z) {
         long long xi = llround(x * 1e5), yi = llround(y * 1e5), zi = llround(z * 1e5);
         return (xi << 42) ^ (yi << 21) ^ zi;
         };
+    //读取每个顶点位置p、面法线n，合并同位置点的面法线
     auto addVertex = [&](const float* p, const QVector3D& n) {
         long long key = keyOf(p[0], p[1], p[2]);
-        auto it = vertMap.find(key);
+        auto it = vertMap.find(key); //算哈希
         unsigned int idx;
-        if (it != vertMap.end()) {
+        if (it != vertMap.end()) { //有重复点
             idx = it->second;
             Vertex& v = sub.vertices[idx];
             v.nx += n.x();
             v.ny += n.y();
-            v.nz += n.z(); //累加面法线
+            v.nz += n.z(); //累加面法线为平滑顶点法线
             }
-        else {
+        else { //新建顶点
             Vertex v{};
             v.px = p[0];
             v.py = p[1];
@@ -285,6 +288,7 @@ bool MeshLoader::loadStl(const QString& path, Mesh& mesh, QString* err) {
             }
         sub.indices.push_back(idx);
         };
+    //潜在问题：精度1e5，世界坐标可能溢出
 
     //判定二进制: 84+50*n恰好等于文件大小
     unsigned int triCount = 0;

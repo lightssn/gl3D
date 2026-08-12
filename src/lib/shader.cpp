@@ -69,6 +69,14 @@ void Shader::setVec3(const char* name, float x, float y, float z) const {
     auto& gl = GLFunctions::instance();
     gl.glUniform3f(gl.glGetUniformLocation(m_program, name), x, y, z);
 }
+void Shader::setVec4(const char* name, float x, float y, float z, float w) const {
+    auto& gl = GLFunctions::instance();
+    gl.glUniform4f(gl.glGetUniformLocation(m_program, name), x, y, z, w);
+}
+void Shader::setFloat(const char* name, float val) const {
+    auto& gl = GLFunctions::instance();
+    gl.glUniform1f(gl.glGetUniformLocation(m_program, name), val);
+}
 void Shader::setInt(const char* name, int val) const {
     auto& gl = GLFunctions::instance();
     gl.glUniform1i(gl.glGetUniformLocation(m_program, name), val);
