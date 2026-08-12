@@ -1,5 +1,7 @@
 #include "shader.h"
 #include "glcontext.h"
+#include <QFile>
+#include <QByteArray>
 #include <cstdio>
 
 Shader::~Shader() { cleanup(); }
@@ -56,6 +58,26 @@ bool Shader::loadFromSource(const char* vertSrc, const char* fragSrc) {
         return false;
     }
     return true;
+}
+
+//读磁盘合并文件→按第二个#version切分为顶点/片段→编译链接
+//顶点与片段集中一个文件 方便比对 仿UE.usf加载方式 源码不内嵌于代码
+bool Shader::loadFromCombinedFile(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        printf("[Shader] 打开shader文件失败: %s\n", qPrintable(path));
+        return false;
+    }
+    const QByteArray data = f.readAll();
+    const int first = data.indexOf("#version");
+    const int second = data.indexOf("#version", first + 1);
+    if (first < 0 || second < 0) {
+        printf("[Shader] %s 缺少#version标记(顶点/片段各一处)\n", qPrintable(path));
+        return false;
+    }
+    const QByteArray vert = data.left(second);
+    const QByteArray frag = data.mid(second);
+    return loadFromSource(vert.constData(), frag.constData());
 }
 
 void Shader::bind() const { GLFunctions::instance().glUseProgram(m_program); }

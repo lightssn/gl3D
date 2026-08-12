@@ -1,5 +1,6 @@
 #pragma once
 #include "gl3d_export.h"
+#include <QString>
 
 //着色器程序封装 编译链接uniform设置 
 class GL3D_EXPORT Shader {
@@ -15,6 +16,8 @@ public:
 
     //编译链接 失败打印info log
     bool loadFromSource(const char* vertSrc, const char* fragSrc);
+    //从磁盘加载合并文件(顶点+片段各以#version起头)并编译链接
+    bool loadFromCombinedFile(const QString& path);
 
     void bind() const;
     void unbind() const;
