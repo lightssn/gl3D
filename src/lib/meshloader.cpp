@@ -10,11 +10,12 @@
 #include <cstring>
 #include <cfloat>
 
-bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err) {
+bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
+                      const std::function<void(int)>& progress) {
     QString suffix = QFileInfo(path).suffix().toLower();
     bool ok = false;
-    if (suffix == "obj") ok = loadObj(path, outMesh, err);
-    else if (suffix == "stl") ok = loadStl(path, outMesh, err);
+    if (suffix == "obj") ok = loadObj(path, outMesh, err, progress);
+    else if (suffix == "stl") ok = loadStl(path, outMesh, err, progress);
     else if (err) *err = "不支持的格式: " + suffix;
     if (!ok) return false;
 
@@ -74,13 +75,22 @@ static QString resolveTexture(const QString& objDir, const QString& relPath) {
     return QString();
     }
 
-bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err) {
+//快速统计文件行数 进度百分比用 文本格式才需要
+static int countLines(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return 0;
+    return f.readAll().count('\n');
+    }
+
+bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
+                         const std::function<void(int)>& progress) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (err) *err = "无法打开: " + path;
         return false;
         }
     const QString objDir = QFileInfo(path).absolutePath();
+    const int totalLines = countLines(path); //进度基准 预读一次
 
     //原始属性池 面索引引用它们
     std::vector<QVector3D> positions;
@@ -90,6 +100,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err) {
 
     QTextStream in(&f);
     SubMesh* cur = nullptr;
+    int parsedLines = 0; //已解析行数 进度用
 
     //obj顶点去重，(vi,ti,ni)组合→子网格内顶点下标
     std::unordered_map<long long, unsigned int> vertMap;
@@ -101,6 +112,10 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err) {
 
     while (!in.atEnd()) {
         const QString line = in.readLine();
+        //进度按已读行数 每512行报一次 避免回调过频
+        int linesRead = ++parsedLines;
+        if (progress && (linesRead & 0x1FF) == 0 && totalLines > 0)
+            progress(std::min(linesRead * 100 / totalLines, 99));
         const QStringList parts = line.trimmed().split(' ', Qt::SkipEmptyParts);
         if (parts.isEmpty() || parts[0].startsWith('#')) continue;
         const QString& tag = parts[0];
@@ -190,6 +205,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err) {
                 }
             }
         }
+    if (progress) progress(100); //解析完成 上传/取景在主线程做
 
     //丢弃空子网格
     for (auto it = mesh.subMeshes.begin(); it != mesh.subMeshes.end();)
@@ -240,7 +256,7 @@ struct StlTri {
     };
 #pragma pack(pop)
 
-bool MeshLoader::loadStl(const QString& path, Mesh& mesh, QString* err) {
+bool MeshLoader::loadStl(const QString& path, Mesh& mesh, QString* err, const std::function<void(int)>& progress) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         if (err) *err = "无法打开: " + path;
@@ -300,6 +316,9 @@ bool MeshLoader::loadStl(const QString& path, Mesh& mesh, QString* err) {
         sub.vertices.reserve(triCount * 2);
         sub.indices.reserve(triCount * 3);
         for (unsigned int i = 0; i < triCount; ++i) {
+            //进度按三角形数 每1024个报一次
+            if (progress && (i & 0x3FF) == 0)
+                progress((int)(i * 100 / triCount));
             QVector3D n(tris[i].normal[0], tris[i].normal[1], tris[i].normal[2]);
             if (n.isNull()) { //法线为零则叉积计算
                 QVector3D a(tris[i].verts[0], tris[i].verts[1], tris[i].verts[2]);
@@ -316,8 +335,15 @@ bool MeshLoader::loadStl(const QString& path, Mesh& mesh, QString* err) {
         //ascii stl 逐行解析vertex
         QTextStream in(data);
         QVector3D faceN;
+        const int totalLines = data.count('\n'); //进度基准
+        int parsedLines = 0;
         while (!in.atEnd()) {
-            const QStringList parts = in.readLine().trimmed().split(' ', Qt::SkipEmptyParts);
+            const QString line = in.readLine();
+            //进度按已读行数 每512行报一次
+            int linesRead = ++parsedLines;
+            if (progress && (linesRead & 0x1FF) == 0 && totalLines > 0)
+                progress(std::min(linesRead * 100 / totalLines, 99));
+            const QStringList parts = line.trimmed().split(' ', Qt::SkipEmptyParts);
             if (parts.size() >= 5 && parts[0] == "facet")
                 faceN = QVector3D(parts[2].toFloat(), parts[3].toFloat(), parts[4].toFloat());
             else if (parts.size() >= 4 && parts[0] == "vertex") {
@@ -326,6 +352,7 @@ bool MeshLoader::loadStl(const QString& path, Mesh& mesh, QString* err) {
                 }
             }
         }
+    if (progress) progress(100); //解析完成
 
     //归一化平滑法线
     for (auto& v : sub.vertices) {

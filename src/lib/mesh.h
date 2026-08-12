@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gl3d_export.h"
+#include <QMetaType>
 #include <QVector3D>
 #include <QString>
 #include <vector>
@@ -34,3 +35,5 @@ struct GL3D_EXPORT Mesh {
     QVector3D center() const { return (bboxMin + bboxMax) * 0.5f; }
     float radius() const { return (bboxMax - bboxMin).length() * 0.5f; }
 };
+
+Q_DECLARE_METATYPE(Mesh) //跨线程信号传Mesh 后台解析→主线程上传

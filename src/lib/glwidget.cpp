@@ -10,6 +10,8 @@
 #include <QKeyEvent>
 #include <QContextMenuEvent>
 #include <QFileInfo>
+#include <QMetaObject>
+#include <QThread>
 #include <QVector4D>
 #include <algorithm>
 #include <cmath>
@@ -18,16 +20,51 @@
 static const float kPi = 3.14159265f;
 
 //着色器源码外置为独立文件(exe同目录shaders/) 仿UE引擎.usf加载 改动免重编译
-//model.vert/frag 模型Blinn-Phong头灯 uFlatColor=1纯色(描边/蒙版/拾取) uOutline>0沿法线挤出
-//overlay.vert/frag 线段 网格/坐标轴/操作器共用
+//model.glsl 模型Blinn-Phong头灯 uFlatColor=1纯色(描边/蒙版/拾取) uOutline>0沿法线挤出
+//overlay.glsl 线段 网格/坐标轴/操作器共用
 
+//后台模型解析工作对象 常驻加载线程 MeshLoader::load阻塞解析 进度经信号回主线程
+//解析(CPU)与渲染上传(需GL context)分离 界面不卡顿
+class ModelLoaderWorker : public QObject {
+    Q_OBJECT
+public slots:
+    void load(const QString& path) {
+        Mesh mesh;
+        QString err;
+        const bool ok = MeshLoader::load(path, mesh, &err, [this](int p) { emit progress(p); });
+        emit finished(ok, err, mesh);
+        }
+signals:
+    void progress(int percent);            //0~100
+    void finished(bool ok, const QString& err, const Mesh& mesh);
+};
 
 GLWidget::GLWidget(QWidget* parent) : QOpenGLWidget(parent) {
     setFocusPolicy(Qt::StrongFocus); //接收键盘
     m_fpsTimer.start();
+
+    //后台加载线程 解析在worker线程 跨线程信号按队列转发
+    qRegisterMetaType<Mesh>("Mesh");
+    m_loadThread = new QThread(this);
+    m_loadWorker = new ModelLoaderWorker();
+    m_loadWorker->moveToThread(m_loadThread);
+    connect(m_loadWorker, &ModelLoaderWorker::progress, this,
+            [this](int p) { emit progressChanged(p); });
+    connect(m_loadWorker, &ModelLoaderWorker::finished, this,
+            [this](bool ok, const QString& err, const Mesh& mesh) { onLoadFinished(ok, err, mesh); });
+    m_loadThread->start();
     }
 
 GLWidget::~GLWidget() {
+    //先停后台加载线程 防止析构中回调泄漏
+    if (m_loadThread) {
+        m_loadThread->quit();
+        m_loadThread->wait(); //加载中则等待解析完成
+        delete m_loadWorker;
+        m_loadWorker = nullptr;
+        delete m_loadThread;
+        m_loadThread = nullptr;
+        }
     //context仍有效时释放GL资源 再销毁函数指针单例
     makeCurrent();
     m_renderer.reset();
@@ -119,7 +156,7 @@ void GLWidget::paintGL() {
     if (m_transformMode != None) drawGizmo(proj, view);
     drawAxesHud(view);
     gl.glEnable(GL_DEPTH_TEST);
-    }
+    }//paintGL
 
 //XY平面(z=0)网格 平行X与平行Y两组线 坐标轴加亮
 void GLWidget::rebuildGrid() {
@@ -376,14 +413,26 @@ bool GLWidget::hasModel() const {
     }
 
 bool GLWidget::loadModel(const QString& path) {
-    Mesh mesh;
-    QString err;
-    if (!MeshLoader::load(path, mesh, &err)) {
-        emit loadFailed(err.isEmpty() ? "加载失败" : err);
-        return false;
-        }
+    if (m_loading) return false; //加载进行中 忽略重复请求
+    m_loading = true;
+    m_currentPath = path;
+    emit loadStarted(); //主窗口显示进度条
+    //解析交后台线程 完成回调onLoadFinished 不做GPU上传与取景
+    QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection,
+                              Q_ARG(QString, path));
+    return true;
+    }
 
-    m_mesh = std::move(mesh);
+//后台解析完成回调(主线程) 成功则上传显存+取景+发modelLoaded 失败发loadFailed
+void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
+    m_loading = false;
+    if (!ok) {
+        emit loadFailed(err.isEmpty() ? "加载失败" : err);
+        emit loadFinished();
+        update();
+        return;
+        }
+    m_mesh = mesh;
     if (isValid()) { //context未就绪则留待initializeGL上传
         makeCurrent();
         m_renderer->upload(m_mesh);
@@ -404,13 +453,13 @@ bool GLWidget::loadModel(const QString& path) {
     emit selectionChanged(false); //新模型默认未选中 操作器按钮隐藏
 
     QString info = QString("%1  顶点%2  三角%3  子网格%4")
-                   .arg(QFileInfo(path).fileName())
+                   .arg(QFileInfo(m_currentPath).fileName())
                    .arg(m_mesh.vertexCount())
                    .arg(m_mesh.triangleCount())
                    .arg((int)m_mesh.subMeshes.size());
     emit modelLoaded(info);
+    emit loadFinished();
     update();
-    return true;
     }
 
 void GLWidget::resetView() {
@@ -879,3 +928,5 @@ void GLWidget::pushAxisArrow(std::vector<OverlayVertex>& out, QVector3D axis,
     pushLine(out, QVector3D(), coneBase, color);
     pushCone(out, coneBase, d, len * 0.28f, len * 0.055f, color);
     }
+
+#include "glwidget.moc" //AUTOMOC: cpp内Q_OBJECT的ModelLoaderWorker元信息

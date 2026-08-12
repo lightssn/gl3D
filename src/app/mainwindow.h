@@ -5,6 +5,7 @@
 class GLWidget;
 class QLabel;
 class QPushButton;
+class QProgressBar;
 class QAction;
 class QToolBar;
 class QMenu;
@@ -18,6 +19,7 @@ class MainWindow : public QMainWindow {
     GLWidget* m_glWidget = nullptr;
     QLabel* m_modelInfo = nullptr;
     QLabel* m_fpsLabel = nullptr;
+    QProgressBar* m_loadProgress = nullptr; //模型加载进度 加载时显示
     QPushButton* m_themeBtn = nullptr;
     QToolBar* m_toolBar = nullptr;   // 主工具栏 右键菜单所称菜单栏
     QAction* m_actProj = nullptr;    // 投影切换 透视/正交

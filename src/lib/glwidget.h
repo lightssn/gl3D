@@ -13,6 +13,8 @@
 class Shader;//前向声明，cpp再引入头文件，改动后编译更快
 class MeshRenderer;
 class QContextMenuEvent;
+class QThread;
+class ModelLoaderWorker; //后台解析线程的工作对象 定义在cpp
 
 //OpenGL渲染视口 负责context生命周期/渲染循环/键鼠交互
 //交互 左键旋转+点击选中 右键点击弹菜单+右键拖拽平移 滚轮缩放 WASD平移 R复位
@@ -61,6 +63,13 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         std::vector<TransformState> m_undoStack;
         std::vector<TransformState> m_redoStack;
         TransformState m_dragStartState; //当前拖拽起点 松开时对比是否变化
+
+        //后台加载 解析在worker线程 解析完主线程上传显存
+        QThread* m_loadThread = nullptr;
+        ModelLoaderWorker* m_loadWorker = nullptr;
+        bool m_loading = false; //加载中 防止重复触发
+        QString m_currentPath;  //当前加载的模型路径 状态栏显示文件名用
+        void onLoadFinished(bool ok, const QString& err, const Mesh& mesh);
 
         //离屏拾取FBO 点击处读颜色判断是否命中模型
         unsigned int m_pickFbo = 0, m_pickColor = 0, m_pickDepth = 0;
@@ -144,6 +153,9 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void contextMenuRequested(const QPoint& globalPos); //右键点击 弹出开关栏菜单
         void modelCleared(); //模型被删除 联动状态栏等
         void historyChanged(bool canUndo, bool canRedo); //撤销/重做可用性 联动按钮
+        void loadStarted();       //开始加载 显示进度条
+        void progressChanged(int percent); //加载进度 0~100
+        void loadFinished();      //加载结束 隐藏进度条
 
     protected:
         void initializeGL() override;

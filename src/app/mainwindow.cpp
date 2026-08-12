@@ -4,6 +4,7 @@
 #include <QToolBar>
 #include <QStatusBar>
 #include <QLabel>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QAction>
 #include <QMenu>
@@ -69,10 +70,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_actRedo->setEnabled(canRedo);
         });
 
-    // 状态栏 模型信息+FPS
+    // 状态栏 模型信息+FPS+加载进度
     m_modelInfo = new QLabel("未加载模型  操作: 左键旋转+点击选中 右键点击弹菜单/拖拽平移 滚轮缩放 WASD平移 R复位", this);
     m_fpsLabel = new QLabel(this);
+    m_loadProgress = new QProgressBar(this);
+    m_loadProgress->setRange(0, 100);
+    m_loadProgress->setValue(0);
+    m_loadProgress->setTextVisible(true);
+    m_loadProgress->setFixedWidth(160);
+    m_loadProgress->setVisible(false); //空闲隐藏 加载时显示
     statusBar()->addWidget(m_modelInfo, 1);
+    statusBar()->addPermanentWidget(m_loadProgress);
     statusBar()->addPermanentWidget(m_fpsLabel);
 
     connect(actOpen, &QAction::triggered, this, [this]() {
@@ -107,6 +115,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // 删除模型后复位状态栏提示
     connect(m_glWidget, &GLWidget::modelCleared, this, [this]() {
         m_modelInfo->setText("未加载模型  操作: 左键旋转+点击选中 右键点击弹菜单/拖拽平移 滚轮缩放 WASD平移 R复位");
+        });
+
+    // 加载进度条: 开始显示清零 期间更新 结束隐藏
+    connect(m_glWidget, &GLWidget::loadStarted, this, [this]() {
+        m_loadProgress->setValue(0);
+        m_loadProgress->setVisible(true);
+        m_modelInfo->setText("正在加载模型...");
+        });
+    connect(m_glWidget, &GLWidget::progressChanged, this, [this](int p) {
+        m_loadProgress->setValue(p);
+        });
+    connect(m_glWidget, &GLWidget::loadFinished, this, [this]() {
+        m_loadProgress->setVisible(false);
         });
 
     // 右键菜单 开关顶部工具栏与状态栏 视口/工具栏/状态栏共用
