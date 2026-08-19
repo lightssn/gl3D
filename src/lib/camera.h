@@ -29,7 +29,7 @@ private:
     QVector3D m_target{0, 0, 0};
     float m_yaw = 0.6f;          //弧度 初始斜视展示立体感
     float m_pitch = 0.35f;
-    float m_distance = 5.0f;
+    float m_distance = 5.0f; //视距
     float m_radius = 1.0f;       //模型半径 平移速度基准
     bool m_ortho = false;        //false透视 true正交
 };

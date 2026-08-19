@@ -84,7 +84,7 @@ void MeshRenderer::render(Shader& shader) {
             shader.setInt("uTexture", 0);
         }
         gl.glBindVertexArray(u.vao);
-        gl.glDrawElements(GL_TRIANGLES, u.indexCount, GL_UNSIGNED_INT, nullptr);
+        gl.glDrawElements(GL_TRIANGLES, u.indexCount, GL_UNSIGNED_INT, nullptr); //draw call
     }
     gl.glBindVertexArray(0);
 }

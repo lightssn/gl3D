@@ -297,13 +297,13 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     //2 沿法线膨胀画红边 只画stencil未覆盖的外缘
+    //保持深度测试 膨胀外缘比原表面更近 通过 而模型前方网格已写入更近深度 遮挡红边
     m_shader->setFloat("uOutline", m_outlineWidth);
     m_shader->setVec4("uFlatColorValue", 0.9f, 0.1f, 0.1f, 1.0f);
     gl.glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
     gl.glStencilMask(0x00);
-    gl.glDisable(GL_DEPTH_TEST);
+    gl.glDepthFunc(GL_LEQUAL);
     m_renderer->render(*m_shader);
-    gl.glEnable(GL_DEPTH_TEST);
     gl.glStencilMask(0xFF);
     gl.glDisable(GL_STENCIL_TEST);
 
