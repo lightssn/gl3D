@@ -112,7 +112,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
 
     while (!in.atEnd()) {
         const QString line = in.readLine();
-        //进度按已读行数 每512行报一次 避免回调过频
+        //每读512行报一次进度
         int linesRead = ++parsedLines;
         if (progress && (linesRead & 0x1FF) == 0 && totalLines > 0)
             progress(std::min(linesRead * 100 / totalLines, 99));

@@ -24,6 +24,18 @@ QToolBar QToolButton:hover, QPushButton:hover {
 QToolBar QToolButton:pressed, QPushButton:pressed {
     background: #262a33;
 }
+/* 勾选态 仅线框与操作器按钮 青色高亮边框+提亮底 */
+#wireBtn:checked, #transformBtn:checked {
+    background: #2a3b4a;
+    border: 1px solid #4fc3f7;
+    color: #9fdcfb;
+}
+/* 投影按钮勾选不改变外观 无按下态效果 */
+#projBtn:checked {
+    background: #2e323d;
+    border: 1px solid #3a3f4c;
+    color: #d7dae0;
+}
 /* 禁用按钮文字深灰 夜间暗底压暗 */
 QToolBar QToolButton:disabled, QPushButton:disabled {
     color: #5a5f6a;

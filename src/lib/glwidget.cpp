@@ -148,6 +148,23 @@ void GLWidget::paintGL() {
     m_shader->setVec4("uFlatColorValue", 1, 1, 1, 1);
     m_renderer->render(*m_shader);
 
+    //线框模式 复用已上传VAO 单片状态切换追加三角边 无CPU几何开销
+    //深度LEQUAL保证边与已被填充的前表面同深度通过 只描可见三角
+    if (m_wireframe) {
+        //根据背景亮暗选线框颜色
+        float lum = (m_clearColor[0] + m_clearColor[1] + m_clearColor[2]) / 3.0f;
+        QVector3D wc = lum > 0.5f ? QVector3D(0.30f, 0.30f, 0.34f) : QVector3D(0.74f, 0.74f, 0.78f);
+        m_shader->setFloat("uOutline", 0.0f);
+        m_shader->setInt("uFlatColor", 1); //纯色模式
+        m_shader->setVec4("uFlatColorValue", wc.x(), wc.y(), wc.z(), 1.0f);
+        gl.glDepthFunc(GL_LEQUAL); //线框与模型同一深度
+        gl.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); //切换线框模式
+        gl.glLineWidth(1.0f);
+        m_renderer->render(*m_shader);
+        gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); //切回
+        gl.glDepthFunc(GL_LESS); //防闪烁
+        }
+
     if (m_selected) drawSelection(proj, view); //红边+粉色蒙版
     m_shader->unbind();
 
@@ -519,6 +536,11 @@ void GLWidget::setTransformMode(int mode) {
         rebuildGizmo();
         doneCurrent();
         }
+    update();
+    }
+
+void GLWidget::setWireframe(bool on) {
+    m_wireframe = on;
     update();
     }
 

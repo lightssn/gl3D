@@ -31,7 +31,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // 投影切换 透视/正交 点击更新投影矩阵
     m_actProj = m_toolBar->addAction("投影:透视");
+    m_actProj->setObjectName("projBtn");
     m_actProj->setCheckable(true);
+    m_toolBar->addSeparator();
+
+    // 线框模式 可见三角面浅灰描边
+    m_actWire = m_toolBar->addAction("线框");
+    m_actWire->setObjectName("wireBtn");
+    m_actWire->setCheckable(true);
+    connect(m_actWire, &QAction::toggled, m_glWidget, &GLWidget::setWireframe);
     m_toolBar->addSeparator();
 
     // 撤销/重做变换 无历史时禁用
@@ -45,6 +53,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_actMove = m_toolBar->addAction("平移");
     m_actRot = m_toolBar->addAction("旋转");
     m_actScale = m_toolBar->addAction("缩放");
+    m_actMove->setObjectName("transformBtn");
+    m_actRot->setObjectName("transformBtn");
+    m_actScale->setObjectName("transformBtn");
     m_actDelete = m_toolBar->addAction("删除");
     m_actMove->setCheckable(true);
     m_actRot->setCheckable(true);
@@ -53,6 +64,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_actRot->setVisible(false);
     m_actScale->setVisible(false);
     m_actDelete->setVisible(false);
+
+    //QToolBar为QAction创建的QToolButton不继承action的objectName 需在真实按钮上设
+    //QSS按id匹配 线框/平移/旋转/缩放按钮获得勾选高亮 投影按钮无按下态
+    if (QWidget* b = m_toolBar->widgetForAction(m_actProj)) b->setObjectName("projBtn");
+    if (QWidget* b = m_toolBar->widgetForAction(m_actWire)) b->setObjectName("wireBtn");
+    for (QAction* a : { m_actMove, m_actRot, m_actScale })
+        if (QWidget* b = m_toolBar->widgetForAction(a)) b->setObjectName("transformBtn");
 
     connect(m_actProj, &QAction::toggled, this, [this](bool on) {
         m_glWidget->setOrtho(on);

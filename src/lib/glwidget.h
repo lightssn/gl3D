@@ -44,6 +44,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         OverlayMesh m_gizmoMesh;      //模型中央操作器
         TransformMode m_transformMode = None;
         bool m_selected = false;
+        bool m_wireframe = false;     //线框模式 打开后可见三角面带浅灰边
         float m_outlineWidth = 0.01f; //选中描边沿法线挤出量
 
         //模型变换 T(c+pos)*R*S*T(-c) 绕模型中心旋转缩放 三模式共享
@@ -144,6 +145,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
 
         void setOrtho(bool on);          //true正交 false透视
         void setTransformMode(int mode); //0无 1平移 2旋转 3缩放
+        void setWireframe(bool on);      //true线框模式 可见三角面带浅灰描边
 
     signals:
         void fpsUpdated(int fps);

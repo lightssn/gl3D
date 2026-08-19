@@ -23,6 +23,7 @@ class MainWindow : public QMainWindow {
     QPushButton* m_themeBtn = nullptr;
     QToolBar* m_toolBar = nullptr;   // 主工具栏 右键菜单所称菜单栏
     QAction* m_actProj = nullptr;    // 投影切换 透视/正交
+    QAction* m_actWire = nullptr;    // 线框模式 可见三角面露浅灰边
     QAction* m_actUndo = nullptr;    // 撤销变换
     QAction* m_actRedo = nullptr;    // 重做变换
     QAction* m_actMove = nullptr;    // 平移操作器
