@@ -107,7 +107,7 @@ void GLWidget::initializeGL() {
     createPickTarget(std::max((int)(width() * m_dpr), 1), std::max((int)(height() * m_dpr), 1));
 
     //构造函数期间收到过加载请求 此时补传显存
-    if (!m_mesh.subMeshes.empty()) {
+    if (!m_mesh.subMeshes.empty() && m_mesh.vertexCount() > 0) {
         m_renderer->upload(m_mesh);
         refreshOverlays();
         }
@@ -123,6 +123,10 @@ void GLWidget::resizeGL(int w, int h) {
 
 void GLWidget::paintGL() {
     auto& gl = GLFunctions::instance();
+    m_frameDrawCalls = 0;
+    m_depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
+    m_faceCulling ? gl.glEnable(GL_CULL_FACE) : gl.glDisable(GL_CULL_FACE);
+    m_srgb ? gl.glEnable(GL_FRAMEBUFFER_SRGB) : gl.glDisable(GL_FRAMEBUFFER_SRGB);
     const qint64 frameElapsed = m_frameTimer.restart();
     if (frameElapsed > 0) {
         m_frameTimesMs.push_back((float)frameElapsed);
@@ -140,7 +144,7 @@ void GLWidget::paintGL() {
         m_fpsTimer.restart();
         }
 
-    if (!m_shader || !m_shader->isValid() || !hasModel()) return;
+    if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; return; }
 
     QMatrix4x4 view = m_camera.viewMatrix();
     float aspect = height() > 0 ? (float)width() / height() : 1.0f;
@@ -155,8 +159,10 @@ void GLWidget::paintGL() {
     m_shader->setMat4("uModel", m_modelMatrix.constData());
     m_shader->setFloat("uOutline", 0.0f);
     m_shader->setInt("uFlatColor", 0);
+    m_shader->setInt("uDebugView", m_debugView);
     m_shader->setVec4("uFlatColorValue", 1, 1, 1, 1);
     m_renderer->render(*m_shader);
+    m_frameDrawCalls += m_renderer->drawUnitCount();
 
     //线框模式 复用已上传VAO 单片状态切换追加三角边 无CPU几何开销
     //深度LEQUAL保证边与已被填充的前表面同深度通过 只描可见三角
@@ -171,18 +177,23 @@ void GLWidget::paintGL() {
         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); //切换线框模式
         gl.glLineWidth(1.0f);
         m_renderer->render(*m_shader);
+        m_frameDrawCalls += m_renderer->drawUnitCount();
         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); //切回
         gl.glDepthFunc(GL_LESS); //防闪烁
         }
 
-    if (m_selected && m_showSelection) drawSelection(proj, view); //红边+粉色蒙版
+    if (m_selected && m_showSelection) {
+        drawSelection(proj, view); //红边+粉色蒙版
+        m_frameDrawCalls += m_renderer->drawUnitCount() * 3;
+    }
     m_shader->unbind();
 
     //操作器与坐标轴HUD 顶层显示 关深度测试
     gl.glDisable(GL_DEPTH_TEST);
     if (m_transformMode != None && m_showGizmo) drawGizmo(proj, view);
-    drawAxesHud(view);
-    gl.glEnable(GL_DEPTH_TEST);
+    if (m_showAxes) drawAxesHud(view);
+    m_depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
+    m_lastDrawCalls = m_frameDrawCalls;
     if (m_frameCount % 8 == 0) emit debugUpdated(collectDebugSnapshot());
     }//paintGL
 
@@ -211,18 +222,34 @@ static qint64 textureBytes(GLFunctions& gl, unsigned int id) {
 DebugSnapshot GLWidget::collectDebugSnapshot() {
     DebugSnapshot s;
     s.fps = m_lastFps;
+    s.drawCalls = m_lastDrawCalls;
+    s.triangles = m_mesh.triangleCount();
     s.frameTimesMs.reserve(static_cast<qsizetype>(m_frameTimesMs.size()));
     for (float frameTime : m_frameTimesMs)
         s.frameTimesMs.append(frameTime);
     if (!m_frameTimesMs.empty()) {
         s.averageFrameMs = std::accumulate(m_frameTimesMs.begin(), m_frameTimesMs.end(), 0.0f) / m_frameTimesMs.size();
         s.lowFrameMs = *std::max_element(m_frameTimesMs.begin(), m_frameTimesMs.end());
+        std::vector<float> sorted = m_frameTimesMs;
+        std::sort(sorted.begin(), sorted.end());
+        const auto percentile = [&sorted](float p) { return sorted[std::min(static_cast<size_t>(p * (sorted.size() - 1)), sorted.size() - 1)]; };
+        s.p95FrameMs = percentile(0.95f);
+        s.p99FrameMs = percentile(0.99f);
+        const size_t slowStart = static_cast<size_t>(0.99f * sorted.size());
+        const float slowSum = std::accumulate(sorted.begin() + std::min(slowStart, sorted.size() - 1), sorted.end(), 0.0f);
+        const size_t slowCount = sorted.size() - std::min(slowStart, sorted.size() - 1);
+        const float slowAverage = slowSum / slowCount;
+        s.onePercentLowFps = slowAverage > 0.0f ? 1000.0f / slowAverage : 0.0f;
     }
     s.fov = m_camera.fov(); s.distance = m_camera.distance();
     s.eye = m_camera.eye(); s.target = m_camera.target(); s.ortho = m_camera.ortho();
     s.antialiasing = m_antialiasing; s.modelLoaded = hasModel();
     if (!isValid()) return s;
     auto& gl = GLFunctions::instance();
+    const auto* renderer = gl.glGetString(GL_RENDERER);
+    const auto* version = gl.glGetString(GL_VERSION);
+    s.renderer = renderer ? QString::fromLatin1(reinterpret_cast<const char*>(renderer)) : QString();
+    s.glVersion = version ? QString::fromLatin1(reinterpret_cast<const char*>(version)) : QString();
     std::vector<unsigned int> vaos, vbos, ebos, textures;
     if (m_renderer) m_renderer->collectResourceIds(vaos, vbos, ebos, textures);
     if (m_gridMesh.vao) vaos.push_back(m_gridMesh.vao), vbos.push_back(m_gridMesh.vbo);
@@ -238,7 +265,13 @@ DebugSnapshot GLWidget::collectDebugSnapshot() {
     GLint rw = 0, rh = 0, rfmt = 0;
     if (m_pickDepth) { gl.glBindRenderbuffer(GL_RENDERBUFFER, m_pickDepth); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &rw); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &rh); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &rfmt); }
     const qint64 depthBytes = (qint64)rw * rh * (rfmt == GL_DEPTH_COMPONENT16 ? 2 : 4);
-    s.resources = {{"VAO", (int)vaos.size(), 0, false}, {"VBO", (int)vbos.size(), bufferBytes, true}, {"EBO", (int)ebos.size(), eboBytes, true}, {"纹理", (int)textures.size(), textureMemory, true}, {"FBO", m_pickFbo ? 1 : 0, pickTextureBytes + depthBytes, true}};
+    qint64 cpuVboBytes = 0, cpuEboBytes = 0;
+    for (const auto& subMesh : m_mesh.subMeshes) {
+        cpuVboBytes += static_cast<qint64>(subMesh.vertices.size() * sizeof(Vertex));
+        cpuEboBytes += static_cast<qint64>(subMesh.indices.size() * sizeof(unsigned int));
+    }
+    const qint64 cpuTextureBytes = m_renderer ? m_renderer->textureCpuBytes() : 0;
+    s.resources = {{"VAO", (int)vaos.size(), 0, 0, false}, {"VBO", (int)vbos.size(), cpuVboBytes, bufferBytes, true}, {"EBO", (int)ebos.size(), cpuEboBytes, eboBytes, true}, {"纹理", (int)textures.size(), cpuTextureBytes, textureMemory, true}, {"FBO", m_pickFbo ? 1 : 0, 0, pickTextureBytes + depthBytes, true}};
     return s;
 }
 
@@ -359,6 +392,7 @@ void GLWidget::drawOverlay(const OverlayMesh& mesh, const QMatrix4x4& mvp,
     m_overlayShader->setVec3("uColor", color.x(), color.y(), color.z());
     gl.glBindVertexArray(mesh.vao);
     gl.glDrawArrays(GL_LINES, 0, mesh.count);
+    ++m_frameDrawCalls;
     gl.glBindVertexArray(0);
     m_overlayShader->unbind();
     }
@@ -549,6 +583,7 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
                    .arg(m_mesh.triangleCount())
                    .arg((int)m_mesh.subMeshes.size());
     emit modelLoaded(info);
+    m_mesh.releaseGeometry();
     emit loadFinished();
     update();
     }
@@ -625,10 +660,9 @@ void GLWidget::setAntialiasing(bool on) {
     }
 
 void GLWidget::setMipmaps(bool on) {
-    if (m_renderer) m_renderer->setMipmapsEnabled(on);
-    if (isValid() && !m_mesh.subMeshes.empty()) {
+    if (m_renderer) {
         makeCurrent();
-        m_renderer->upload(m_mesh);
+        m_renderer->setMipmapsEnabled(on);
         doneCurrent();
     }
     update();
@@ -637,6 +671,11 @@ void GLWidget::setMipmaps(bool on) {
 void GLWidget::setShowGrid(bool on) { m_showGrid = on; update(); }
 void GLWidget::setShowGizmo(bool on) { m_showGizmo = on; update(); }
 void GLWidget::setShowSelection(bool on) { m_showSelection = on; update(); }
+void GLWidget::setShowAxes(bool on) { m_showAxes = on; update(); }
+void GLWidget::setDepthTest(bool on) { m_depthTest = on; update(); }
+void GLWidget::setFaceCulling(bool on) { m_faceCulling = on; update(); }
+void GLWidget::setSrgb(bool on) { m_srgb = on; update(); }
+void GLWidget::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); update(); }
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移
 void GLWidget::updateModelMatrix() {

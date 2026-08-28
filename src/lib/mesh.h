@@ -32,6 +32,7 @@ struct GL3D_EXPORT Mesh {
     //三角形总数 状态栏统计用
     int triangleCount() const;
     int vertexCount() const;
+    void releaseGeometry();
     QVector3D center() const { return (bboxMin + bboxMax) * 0.5f; }
     float radius() const { return (bboxMax - bboxMin).length() * 0.5f; }
 };

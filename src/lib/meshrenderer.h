@@ -3,6 +3,7 @@
 #include "gl3d_export.h"
 #include "mesh.h"
 #include <vector>
+#include <QImage>
 
 class Shader;
 
@@ -16,10 +17,12 @@ public:
     MeshRenderer& operator=(const MeshRenderer&) = delete;
 
     void upload(const Mesh& mesh);   //CPU网格→显存 旧资源先释放
-    void setMipmapsEnabled(bool enabled) { m_mipmapsEnabled = enabled; }
+    void setMipmapsEnabled(bool enabled);
     void render(Shader& shader);     //逐子网格绘制
     void clear();                    //释放全部GL资源
     bool empty() const { return m_units.empty(); }
+    int drawUnitCount() const { return static_cast<int>(m_units.size()); }
+    qint64 textureCpuBytes() const;
     void collectResourceIds(std::vector<unsigned int>& vaos,
                             std::vector<unsigned int>& vbos,
                             std::vector<unsigned int>& ebos,
@@ -30,8 +33,10 @@ private:
         unsigned int vao = 0, vbo = 0, ebo = 0;
         int indexCount = 0;
         unsigned int texture = 0;    //0表示无纹理 用漫反射色
+        QImage textureImage;
         float kd[3] = {0.7f, 0.7f, 0.7f};
     };
     std::vector<DrawUnit> m_units;
     bool m_mipmapsEnabled = false;
+    void uploadTexture(DrawUnit& unit);
 };

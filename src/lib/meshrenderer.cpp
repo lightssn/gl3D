@@ -6,6 +6,35 @@
 
 MeshRenderer::~MeshRenderer() { clear(); }
 
+qint64 MeshRenderer::textureCpuBytes() const {
+    qint64 total = 0;
+    for (const auto& unit : m_units) total += unit.textureImage.sizeInBytes();
+    return total;
+}
+
+void MeshRenderer::setMipmapsEnabled(bool enabled) {
+    if (m_mipmapsEnabled == enabled) return;
+    m_mipmapsEnabled = enabled;
+    auto& gl = GLFunctions::instance();
+    for (auto& unit : m_units) {
+        if (unit.texture) gl.glDeleteTextures(1, &unit.texture);
+        unit.texture = 0;
+        uploadTexture(unit);
+    }
+}
+
+void MeshRenderer::uploadTexture(DrawUnit& unit) {
+    if (unit.textureImage.isNull()) return;
+    auto& gl = GLFunctions::instance();
+    gl.glGenTextures(1, &unit.texture);
+    gl.glBindTexture(GL_TEXTURE_2D, unit.texture);
+    const QImage& image = unit.textureImage;
+    gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width(), image.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, image.constBits());
+    if (m_mipmapsEnabled) { gl.glGenerateMipmap(GL_TEXTURE_2D); gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); }
+    else gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+}
+
 void MeshRenderer::collectResourceIds(std::vector<unsigned int>& vaos,
                                       std::vector<unsigned int>& vbos,
                                       std::vector<unsigned int>& ebos,
@@ -65,19 +94,8 @@ void MeshRenderer::upload(const Mesh& mesh) {
             QImage img(s.texturePath);
             if (!img.isNull()) {
                 QImage tex = img.convertToFormat(QImage::Format_RGBA8888).mirrored();
-                gl.glGenTextures(1, &u.texture);
-                gl.glBindTexture(GL_TEXTURE_2D, u.texture);
-                gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width(), tex.height(),
-                                0, GL_RGBA, GL_UNSIGNED_BYTE, tex.constBits());
-                if (m_mipmapsEnabled) {
-                    gl.glGenerateMipmap(GL_TEXTURE_2D);
-                    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-                } else {
-                    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                }
-                gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                u.textureImage = tex;
+                uploadTexture(u);
             } else {
                 printf("[MeshRenderer] 纹理加载失败: %s\n", qPrintable(s.texturePath));
             }

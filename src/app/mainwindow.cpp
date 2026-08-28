@@ -13,13 +13,21 @@
 #include <QFile>
 #include <QApplication>
 #include <QMessageBox>
+#include <QHBoxLayout>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     resize(1100, 720);
     setWindowTitle("gl3d 模型查看器");
 
-    m_glWidget = new GLWidget(this);
-    setCentralWidget(m_glWidget);
+    auto* viewContainer = new QWidget(this);
+    auto* viewLayout = new QHBoxLayout(viewContainer);
+    viewLayout->setContentsMargins(0, 0, 0, 0);
+    viewLayout->setSpacing(0);
+    m_glWidget = new GLWidget(viewContainer);
+    m_debugWindow = new DebugWindow(m_glWidget, viewContainer);
+    viewLayout->addWidget(m_debugWindow, 0);
+    viewLayout->addWidget(m_glWidget, 1);
+    setCentralWidget(viewContainer);
 
     // 工具栏 打开/复位/主题/投影/操作器
     m_toolBar = addToolBar("主工具栏");
@@ -109,10 +117,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (!path.isEmpty()) openModel(path);
         });
     connect(actReset, &QAction::triggered, m_glWidget, &GLWidget::resetView);
-    m_debugWindow = new DebugWindow(m_glWidget, this);
     m_actDebug->setCheckable(true);
     connect(m_actDebug, &QAction::toggled, m_debugWindow, &QWidget::setVisible);
-    connect(m_debugWindow, &QDialog::finished, m_actDebug, &QAction::setChecked);
+    connect(m_debugWindow, &DebugWindow::wireframeChanged, m_actWire, &QAction::setChecked);
+    connect(m_actWire, &QAction::toggled, m_debugWindow, &DebugWindow::syncWireframe);
     connect(m_themeBtn, &QPushButton::clicked, this, [this]() {
         applyTheme(!m_night);
         });
@@ -215,5 +223,6 @@ void MainWindow::applyTheme(bool night) {
 
     if (night) m_glWidget->setClearColor(0.13f, 0.13f, 0.16f);
     else m_glWidget->setClearColor(0.85f, 0.86f, 0.88f);
+    if (m_debugWindow) m_debugWindow->setNightMode(night);
     m_themeBtn->setText(night ? "日间模式" : "夜间模式");
     }

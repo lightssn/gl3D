@@ -11,3 +11,10 @@ int Mesh::vertexCount() const {
     for (const auto& s : subMeshes) n += static_cast<int>(s.vertices.size());
     return n;
 }
+
+void Mesh::releaseGeometry() {
+    for (auto& subMesh : subMeshes) {
+        std::vector<Vertex>().swap(subMesh.vertices);
+        std::vector<unsigned int>().swap(subMesh.indices);
+    }
+}

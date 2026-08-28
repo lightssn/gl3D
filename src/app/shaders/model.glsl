@@ -33,13 +33,16 @@ uniform int uUseTexture; //纹理开关
 uniform vec3 uDiffuse; //纯色底色
 uniform int uFlatColor; //纯色开关
 uniform vec4 uFlatColorValue; //含alpha纯色值
+uniform int uDebugView; //0光照 1法线 2UV
 
 void main() {
     //选中红边/粉色蒙版，跳过光照
     if (uFlatColor == 1) { FragColor = uFlatColorValue; return; }
 
-    vec3 base = uUseTexture == 1 ? texture(uTexture, vUV).rgb : uDiffuse; //底色=纹理rgb或纯色
     vec3 n = normalize(vNormal); //插值后法线≠1 重归一化
+    if (uDebugView == 1) { FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
+    if (uDebugView == 2) { FragColor = vec4(fract(vUV), 0.0, 1.0); return; }
+    vec3 base = uUseTexture == 1 ? texture(uTexture, vUV).rgb : uDiffuse; //底色=纹理rgb或纯色
     vec3 light = vec3(0.0, 0.0, 1.0); //头灯，视线z
     float diff = abs(dot(n, light)) * 0.75; //漫反射，dot(n, light)为法线和光线夹角余弦值，-1背黑~0侧中~1正亮，abs兼容单面片
     vec3 h = normalize(light + vec3(0.0, 0.0, 1.0)); //半程向量

@@ -95,6 +95,13 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         bool m_showGrid = true;
         bool m_showGizmo = true;
         bool m_showSelection = true;
+        bool m_showAxes = true;
+        bool m_depthTest = true;
+        bool m_faceCulling = false;
+        bool m_srgb = false;
+        int m_debugView = 0;
+        int m_frameDrawCalls = 0;
+        int m_lastDrawCalls = 0;
         DebugSnapshot collectDebugSnapshot();
 
         //线段几何构建 网格/坐标轴/操作器复用
@@ -160,6 +167,11 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void setShowGrid(bool on);
         void setShowGizmo(bool on);
         void setShowSelection(bool on);
+        void setShowAxes(bool on);
+        void setDepthTest(bool on);
+        void setFaceCulling(bool on);
+        void setSrgb(bool on);
+        void setDebugView(int mode);
         DebugSnapshot debugSnapshot();
 
     signals:
