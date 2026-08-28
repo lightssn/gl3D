@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "glwidget.h"
+#include "debugwindow.h"
 
 #include <QToolBar>
 #include <QStatusBar>
@@ -25,6 +26,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_toolBar->setMovable(false);
     QAction* actOpen = m_toolBar->addAction("打开模型");
     QAction* actReset = m_toolBar->addAction("复位视角");
+    m_actDebug = m_toolBar->addAction("调试器");
     m_themeBtn = new QPushButton("日间模式", this);
     m_toolBar->addWidget(m_themeBtn);
     m_toolBar->addSeparator();
@@ -107,6 +109,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (!path.isEmpty()) openModel(path);
         });
     connect(actReset, &QAction::triggered, m_glWidget, &GLWidget::resetView);
+    m_debugWindow = new DebugWindow(m_glWidget, this);
+    m_actDebug->setCheckable(true);
+    connect(m_actDebug, &QAction::toggled, m_debugWindow, &QWidget::setVisible);
+    connect(m_debugWindow, &QDialog::finished, m_actDebug, &QAction::setChecked);
     connect(m_themeBtn, &QPushButton::clicked, this, [this]() {
         applyTheme(!m_night);
         });

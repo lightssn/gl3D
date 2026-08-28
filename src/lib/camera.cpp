@@ -26,7 +26,7 @@ QMatrix4x4 Camera::projMatrix(float aspect) const {
         float halfW = halfH * aspect;
         p.ortho(-halfW, halfW, -halfH, halfH, nearP, farP);
     } else {
-        p.perspective(45.0f, aspect, nearP, farP);
+        p.perspective(m_fov, aspect, nearP, farP);
     }
     return p;
 }

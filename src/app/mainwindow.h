@@ -9,6 +9,7 @@ class QProgressBar;
 class QAction;
 class QToolBar;
 class QMenu;
+class DebugWindow;
 
 // 主窗口 工具栏+GL视口+状态栏 日夜主题切换
 class MainWindow : public QMainWindow {
@@ -34,6 +35,8 @@ class MainWindow : public QMainWindow {
     QMenu* m_contextMenu = nullptr;  // 右键菜单 开关菜单栏/状态栏
     QAction* m_actShowMenuBar = nullptr;   // 右键菜单项 顶部工具栏
     QAction* m_actShowStatusBar = nullptr; // 右键菜单项 状态栏
+    QAction* m_actDebug = nullptr;
+    DebugWindow* m_debugWindow = nullptr;
     bool m_night = true;
 
 public:

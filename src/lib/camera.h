@@ -18,6 +18,7 @@ public:
 
     void setOrtho(bool on) { m_ortho = on; } //切换正交投影
     bool ortho() const { return m_ortho; }
+    float fov() const { return m_fov; }
 
     QVector3D target() const { return m_target; }
     float distance() const { return m_distance; }
@@ -32,4 +33,5 @@ private:
     float m_distance = 5.0f; //视距
     float m_radius = 1.0f;       //模型半径 平移速度基准
     bool m_ortho = false;        //false透视 true正交
+    float m_fov = 45.0f;
 };

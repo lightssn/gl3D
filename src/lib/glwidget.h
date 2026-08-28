@@ -3,6 +3,7 @@
 #include "gl3d_export.h"
 #include "camera.h"
 #include "mesh.h"
+#include "debugstats.h"
 #include <QOpenGLWidget>
 #include <QElapsedTimer>
 #include <QQuaternion>
@@ -86,7 +87,15 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         float m_clearColor[3] = { 0.13f, 0.13f, 0.16f };
 
         int m_frameCount = 0;         //1秒窗口内帧数
+        int m_lastFps = 0;
         QElapsedTimer m_fpsTimer;
+        QElapsedTimer m_frameTimer;
+        std::vector<float> m_frameTimesMs;
+        bool m_antialiasing = true;
+        bool m_showGrid = true;
+        bool m_showGizmo = true;
+        bool m_showSelection = true;
+        DebugSnapshot collectDebugSnapshot();
 
         //线段几何构建 网格/坐标轴/操作器复用
         static void pushLine(std::vector<OverlayVertex>& out, QVector3D a, QVector3D b, QVector3D color);
@@ -146,6 +155,12 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void setOrtho(bool on);          //true正交 false透视
         void setTransformMode(int mode); //0无 1平移 2旋转 3缩放
         void setWireframe(bool on);      //true线框模式 可见三角面带浅灰描边
+        void setAntialiasing(bool on);
+        void setMipmaps(bool on);
+        void setShowGrid(bool on);
+        void setShowGizmo(bool on);
+        void setShowSelection(bool on);
+        DebugSnapshot debugSnapshot();
 
     signals:
         void fpsUpdated(int fps);
@@ -158,6 +173,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void loadStarted();       //开始加载 显示进度条
         void progressChanged(int percent); //加载进度 0~100
         void loadFinished();      //加载结束 隐藏进度条
+        void debugUpdated(const DebugSnapshot& snapshot);
 
     protected:
         void initializeGL() override;

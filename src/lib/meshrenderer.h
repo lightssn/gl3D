@@ -16,9 +16,14 @@ public:
     MeshRenderer& operator=(const MeshRenderer&) = delete;
 
     void upload(const Mesh& mesh);   //CPU网格→显存 旧资源先释放
+    void setMipmapsEnabled(bool enabled) { m_mipmapsEnabled = enabled; }
     void render(Shader& shader);     //逐子网格绘制
     void clear();                    //释放全部GL资源
     bool empty() const { return m_units.empty(); }
+    void collectResourceIds(std::vector<unsigned int>& vaos,
+                            std::vector<unsigned int>& vbos,
+                            std::vector<unsigned int>& ebos,
+                            std::vector<unsigned int>& textures) const;
 
 private:
     struct DrawUnit {
@@ -28,4 +33,5 @@ private:
         float kd[3] = {0.7f, 0.7f, 0.7f};
     };
     std::vector<DrawUnit> m_units;
+    bool m_mipmapsEnabled = false;
 };

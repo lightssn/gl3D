@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <numeric>
 
 static const float kPi = 3.14159265f;
 
@@ -42,6 +43,8 @@ signals:
 GLWidget::GLWidget(QWidget* parent) : QOpenGLWidget(parent) {
     setFocusPolicy(Qt::StrongFocus); //接收键盘
     m_fpsTimer.start();
+    m_frameTimer.start();
+    qRegisterMetaType<DebugSnapshot>("DebugSnapshot");
 
     //后台加载线程 解析在worker线程 跨线程信号按队列转发
     qRegisterMetaType<Mesh>("Mesh");
@@ -87,6 +90,7 @@ void GLWidget::initializeGL() {
     gl.glEnable(GL_DEPTH_TEST);
     gl.glDisable(GL_CULL_FACE); //叶片等薄片需双面可见
     gl.glEnable(GL_STENCIL_TEST); //选中描边依赖stencil
+    gl.glEnable(GL_MULTISAMPLE);
     gl.glClearColor(m_clearColor[0], m_clearColor[1], m_clearColor[2], 1.0f);
     m_dpr = devicePixelRatioF();
     printf("[GLWidget] %s\n", (const char*)gl.glGetString(GL_RENDERER));
@@ -119,13 +123,19 @@ void GLWidget::resizeGL(int w, int h) {
 
 void GLWidget::paintGL() {
     auto& gl = GLFunctions::instance();
+    const qint64 frameElapsed = m_frameTimer.restart();
+    if (frameElapsed > 0) {
+        m_frameTimesMs.push_back((float)frameElapsed);
+        if (m_frameTimesMs.size() > 240) m_frameTimesMs.erase(m_frameTimesMs.begin());
+    }
     gl.glClearColor(m_clearColor[0], m_clearColor[1], m_clearColor[2], 1.0f);
     gl.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
     //FPS统计 每秒发一次
     ++m_frameCount;
     if (m_fpsTimer.elapsed() >= 1000) {
-        emit fpsUpdated(m_frameCount);
+        m_lastFps = m_frameCount;
+        emit fpsUpdated(m_lastFps);
         m_frameCount = 0;
         m_fpsTimer.restart();
         }
@@ -136,7 +146,7 @@ void GLWidget::paintGL() {
     float aspect = height() > 0 ? (float)width() / height() : 1.0f;
     QMatrix4x4 proj = m_camera.projMatrix(aspect);
 
-    drawGrid(proj, view); //背景网格 先画被模型遮挡
+    if (m_showGrid) drawGrid(proj, view); //背景网格 先画被模型遮挡
 
     //主模型 Blinn-Phong头灯
     m_shader->bind();
@@ -165,15 +175,79 @@ void GLWidget::paintGL() {
         gl.glDepthFunc(GL_LESS); //防闪烁
         }
 
-    if (m_selected) drawSelection(proj, view); //红边+粉色蒙版
+    if (m_selected && m_showSelection) drawSelection(proj, view); //红边+粉色蒙版
     m_shader->unbind();
 
     //操作器与坐标轴HUD 顶层显示 关深度测试
     gl.glDisable(GL_DEPTH_TEST);
-    if (m_transformMode != None) drawGizmo(proj, view);
+    if (m_transformMode != None && m_showGizmo) drawGizmo(proj, view);
     drawAxesHud(view);
     gl.glEnable(GL_DEPTH_TEST);
+    if (m_frameCount % 8 == 0) emit debugUpdated(collectDebugSnapshot());
     }//paintGL
+
+static qint64 textureBytes(GLFunctions& gl, unsigned int id) {
+    gl.glBindTexture(GL_TEXTURE_2D, id);
+    GLint width = 0, height = 0, levels = 1, format = GL_RGBA8, minFilter = GL_LINEAR;
+    gl.glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+    gl.glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+    gl.glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &format);
+    gl.glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minFilter);
+    gl.glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_IMMUTABLE_LEVELS, &levels);
+    if (levels <= 0) {
+        levels = 1;
+        if (minFilter == GL_NEAREST_MIPMAP_NEAREST || minFilter == GL_LINEAR_MIPMAP_NEAREST ||
+            minFilter == GL_NEAREST_MIPMAP_LINEAR || minFilter == GL_LINEAR_MIPMAP_LINEAR) {
+            levels = 1; for (int d = std::max(width, height); d > 1; d >>= 1) ++levels;
+        }
+    }
+    int bytesPerPixel = (format == GL_R8 ? 1 : format == GL_RG8 ? 2 : format == GL_RGB8 ? 3 : 4);
+    qint64 total = 0;
+    for (int level = 0; level < levels; ++level)
+        total += (qint64)std::max(1, width >> level) * std::max(1, height >> level) * bytesPerPixel;
+    return total;
+}
+
+DebugSnapshot GLWidget::collectDebugSnapshot() {
+    DebugSnapshot s;
+    s.fps = m_lastFps;
+    s.frameTimesMs.reserve(static_cast<qsizetype>(m_frameTimesMs.size()));
+    for (float frameTime : m_frameTimesMs)
+        s.frameTimesMs.append(frameTime);
+    if (!m_frameTimesMs.empty()) {
+        s.averageFrameMs = std::accumulate(m_frameTimesMs.begin(), m_frameTimesMs.end(), 0.0f) / m_frameTimesMs.size();
+        s.lowFrameMs = *std::max_element(m_frameTimesMs.begin(), m_frameTimesMs.end());
+    }
+    s.fov = m_camera.fov(); s.distance = m_camera.distance();
+    s.eye = m_camera.eye(); s.target = m_camera.target(); s.ortho = m_camera.ortho();
+    s.antialiasing = m_antialiasing; s.modelLoaded = hasModel();
+    if (!isValid()) return s;
+    auto& gl = GLFunctions::instance();
+    std::vector<unsigned int> vaos, vbos, ebos, textures;
+    if (m_renderer) m_renderer->collectResourceIds(vaos, vbos, ebos, textures);
+    if (m_gridMesh.vao) vaos.push_back(m_gridMesh.vao), vbos.push_back(m_gridMesh.vbo);
+    if (m_axesMesh.vao) vaos.push_back(m_axesMesh.vao), vbos.push_back(m_axesMesh.vbo);
+    if (m_gizmoMesh.vao) vaos.push_back(m_gizmoMesh.vao), vbos.push_back(m_gizmoMesh.vbo);
+    qint64 bufferBytes = 0;
+    for (unsigned int id : vbos) { GLint n = 0; gl.glBindBuffer(GL_ARRAY_BUFFER, id); gl.glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &n); bufferBytes += n; }
+    qint64 eboBytes = 0;
+    for (unsigned int id : ebos) { GLint n = 0; gl.glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, id); gl.glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE, &n); eboBytes += n; }
+    qint64 textureMemory = 0; for (unsigned int id : textures) textureMemory += textureBytes(gl, id);
+    qint64 pickTextureBytes = 0;
+    if (m_pickColor) { pickTextureBytes = textureBytes(gl, m_pickColor); textures.push_back(m_pickColor); textureMemory += pickTextureBytes; }
+    GLint rw = 0, rh = 0, rfmt = 0;
+    if (m_pickDepth) { gl.glBindRenderbuffer(GL_RENDERBUFFER, m_pickDepth); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &rw); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &rh); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &rfmt); }
+    const qint64 depthBytes = (qint64)rw * rh * (rfmt == GL_DEPTH_COMPONENT16 ? 2 : 4);
+    s.resources = {{"VAO", (int)vaos.size(), 0, false}, {"VBO", (int)vbos.size(), bufferBytes, true}, {"EBO", (int)ebos.size(), eboBytes, true}, {"纹理", (int)textures.size(), textureMemory, true}, {"FBO", m_pickFbo ? 1 : 0, pickTextureBytes + depthBytes, true}};
+    return s;
+}
+
+DebugSnapshot GLWidget::debugSnapshot() {
+    makeCurrent();
+    DebugSnapshot s = collectDebugSnapshot();
+    doneCurrent();
+    return s;
+}
 
 //XY平面(z=0)网格 平行X与平行Y两组线 坐标轴加亮
 void GLWidget::rebuildGrid() {
@@ -543,6 +617,26 @@ void GLWidget::setWireframe(bool on) {
     m_wireframe = on;
     update();
     }
+
+void GLWidget::setAntialiasing(bool on) {
+    m_antialiasing = on;
+    if (isValid()) { makeCurrent(); on ? GLFunctions::instance().glEnable(GL_MULTISAMPLE) : GLFunctions::instance().glDisable(GL_MULTISAMPLE); doneCurrent(); }
+    update();
+    }
+
+void GLWidget::setMipmaps(bool on) {
+    if (m_renderer) m_renderer->setMipmapsEnabled(on);
+    if (isValid() && !m_mesh.subMeshes.empty()) {
+        makeCurrent();
+        m_renderer->upload(m_mesh);
+        doneCurrent();
+    }
+    update();
+}
+
+void GLWidget::setShowGrid(bool on) { m_showGrid = on; update(); }
+void GLWidget::setShowGizmo(bool on) { m_showGizmo = on; update(); }
+void GLWidget::setShowSelection(bool on) { m_showSelection = on; update(); }
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移
 void GLWidget::updateModelMatrix() {

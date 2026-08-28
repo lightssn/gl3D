@@ -3,6 +3,8 @@ add_executable(gl3d
     main.cpp
     mainwindow.h
     mainwindow.cpp
+    debugwindow.h
+    debugwindow.cpp
 )
 
 target_link_libraries(gl3d PRIVATE
