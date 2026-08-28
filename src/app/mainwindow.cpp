@@ -113,7 +113,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(actOpen, &QAction::triggered, this, [this]() {
         QString path = QFileDialog::getOpenFileName(
-                           this, "选择模型", QString(), "模型文件 (*.stl *.obj);;所有文件 (*)");
+                           this, "选择模型", QString(), "模型文件 (*.stl *.obj *.glb);;所有文件 (*)");
         if (!path.isEmpty()) openModel(path);
         });
     connect(actReset, &QAction::triggered, m_glWidget, &GLWidget::resetView);

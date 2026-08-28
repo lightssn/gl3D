@@ -90,14 +90,16 @@ void MeshRenderer::upload(const Mesh& mesh) {
         gl.glBindVertexArray(0);
 
         //纹理上传 QImage镜像y轴匹配GL uv原点
-        if (!s.texturePath.isEmpty()) {
-            QImage img(s.texturePath);
+        if (!s.textureData.isEmpty() || !s.texturePath.isEmpty()) {
+            QImage img = !s.textureData.isEmpty() ? QImage::fromData(s.textureData) : QImage(s.texturePath);
             if (!img.isNull()) {
-                QImage tex = img.convertToFormat(QImage::Format_RGBA8888).mirrored();
+                QImage tex = img.convertToFormat(QImage::Format_RGBA8888);
+                if (s.flipTextureVertically) tex = tex.mirrored();
                 u.textureImage = tex;
                 uploadTexture(u);
             } else {
-                printf("[MeshRenderer] 纹理加载失败: %s\n", qPrintable(s.texturePath));
+                printf("[MeshRenderer] 纹理加载失败: %s\n",
+                       s.texturePath.isEmpty() ? "GLB内嵌纹理" : qPrintable(s.texturePath));
             }
         }
         m_units.push_back(u);

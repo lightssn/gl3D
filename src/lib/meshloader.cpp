@@ -12,10 +12,12 @@
 
 bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
                       const std::function<void(int)>& progress) {
+    outMesh = Mesh{};
     QString suffix = QFileInfo(path).suffix().toLower();
     bool ok = false;
     if (suffix == "obj") ok = loadObj(path, outMesh, err, progress);
     else if (suffix == "stl") ok = loadStl(path, outMesh, err, progress);
+    else if (suffix == "glb") ok = loadGlb(path, outMesh, err, progress);
     else if (err) *err = "不支持的格式: " + suffix;
     if (!ok) return false;
 

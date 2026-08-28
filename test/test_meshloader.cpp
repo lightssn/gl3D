@@ -2,6 +2,10 @@
 #include "meshloader.h"
 #include <QTemporaryDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QtEndian>
 #include <cstring>
 
 // 临时目录写入测试文件 用例间隔离
@@ -93,4 +97,56 @@ TEST_F(MeshLoaderTest, RejectBadInput) {
     QString err;
     EXPECT_FALSE(MeshLoader::load(write("x.fbx", "junk"), m, &err));
     EXPECT_FALSE(MeshLoader::load(dir.filePath("missing.obj"), m, &err));
+}
+
+// GLB 2.0内嵌三角形，验证buffer/accessor和内嵌基础色纹理
+TEST_F(MeshLoaderTest, GlbEmbeddedMesh) {
+    QByteArray bin;
+    const float positions[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    const quint16 indices[] = {0, 1, 2};
+    bin.append(reinterpret_cast<const char*>(positions), sizeof(positions));
+    bin.append(reinterpret_cast<const char*>(indices), sizeof(indices));
+    bin.append("img", 3);
+    while (bin.size() % 4) bin.append('\0');
+
+    QJsonObject root;
+    root["asset"] = QJsonObject{{"version", "2.0"}};
+    root["buffers"] = QJsonArray{QJsonObject{{"byteLength", bin.size()}}};
+    root["bufferViews"] = QJsonArray{
+        QJsonObject{{"buffer", 0}, {"byteOffset", 0}, {"byteLength", int(sizeof(positions))}},
+        QJsonObject{{"buffer", 0}, {"byteOffset", int(sizeof(positions))}, {"byteLength", int(sizeof(indices))}},
+        QJsonObject{{"buffer", 0}, {"byteOffset", int(sizeof(positions) + sizeof(indices))}, {"byteLength", 3}}
+    };
+    root["accessors"] = QJsonArray{
+        QJsonObject{{"bufferView", 0}, {"componentType", 5126}, {"count", 3}, {"type", "VEC3"}},
+        QJsonObject{{"bufferView", 1}, {"componentType", 5123}, {"count", 3}, {"type", "SCALAR"}}
+    };
+    root["images"] = QJsonArray{QJsonObject{{"bufferView", 2}, {"mimeType", "image/png"}}};
+    root["textures"] = QJsonArray{QJsonObject{{"source", 0}}};
+    root["materials"] = QJsonArray{QJsonObject{{"pbrMetallicRoughness", QJsonObject{{"baseColorTexture", QJsonObject{{"index", 0}}}}}}};
+    root["meshes"] = QJsonArray{QJsonObject{{"primitives", QJsonArray{QJsonObject{{"attributes", QJsonObject{{"POSITION", 0}}}, {"indices", 1}, {"material", 0}}}}}};
+    root["nodes"] = QJsonArray{QJsonObject{{"mesh", 0}}};
+    root["scenes"] = QJsonArray{QJsonObject{{"nodes", QJsonArray{0}}}};
+    root["scene"] = 0;
+
+    QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    while (json.size() % 4) json.append(' ');
+    QByteArray glb;
+    auto appendU32 = [&](quint32 value) {
+        const quint32 little = qToLittleEndian(value);
+        glb.append(reinterpret_cast<const char*>(&little), sizeof(little));
+    };
+    appendU32(0x46546C67); appendU32(2); appendU32(12 + 8 + json.size() + 8 + bin.size());
+    appendU32(json.size()); appendU32(0x4E4F534A); glb.append(json);
+    appendU32(bin.size()); appendU32(0x004E4942); glb.append(bin);
+
+    Mesh mesh;
+    QString error;
+    ASSERT_TRUE(MeshLoader::load(write("triangle.glb", glb), mesh, &error)) << qPrintable(error);
+    ASSERT_EQ(mesh.subMeshes.size(), 1);
+    EXPECT_EQ(mesh.vertexCount(), 3);
+    EXPECT_EQ(mesh.triangleCount(), 1);
+    EXPECT_EQ(mesh.subMeshes[0].textureData, QByteArray("img", 3));
+    EXPECT_FALSE(mesh.subMeshes[0].flipTextureVertically);
+    EXPECT_NEAR(mesh.subMeshes[0].vertices[0].nz, 1.0f, 1e-4f);
 }

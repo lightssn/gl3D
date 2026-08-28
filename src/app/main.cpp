@@ -28,7 +28,7 @@ static int runInfo(const QString& path) {
         printf("    - %s  三角%zu  纹理%s\n",
                s.materialName.empty() ? "(默认)" : s.materialName.c_str(),
                s.indices.size() / 3,
-               s.texturePath.isEmpty() ? "无" : qPrintable(QFileInfo(s.texturePath).fileName()));
+               !s.textureData.isEmpty() ? "内嵌" : (s.texturePath.isEmpty() ? "无" : qPrintable(QFileInfo(s.texturePath).fileName())));
     QVector3D mn = mesh.bboxMin, mx = mesh.bboxMax;
     printf("  包围盒:   (%.3f %.3f %.3f) ~ (%.3f %.3f %.3f)\n",
            mn.x(), mn.y(), mn.z(), mx.x(), mx.y(), mx.z());
@@ -45,12 +45,12 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion("1.0");
 
     QCommandLineParser parser;
-    parser.setApplicationDescription("gl3d 模型查看器 stl/obj → OpenGL渲染");
+    parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb → OpenGL渲染");
     parser.addHelpOption();
     parser.addVersionOption();
     QCommandLineOption infoOpt({"i", "info"}, "仅打印模型信息 不启动GUI");
     parser.addOption(infoOpt);
-    parser.addPositionalArgument("model", "模型文件路径 stl/obj");
+    parser.addPositionalArgument("model", "模型文件路径 stl/obj/glb");
     parser.process(app);
 
     const QStringList args = parser.positionalArguments();

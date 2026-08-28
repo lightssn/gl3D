@@ -126,7 +126,6 @@ void GLWidget::paintGL() {
     m_frameDrawCalls = 0;
     m_depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
     m_faceCulling ? gl.glEnable(GL_CULL_FACE) : gl.glDisable(GL_CULL_FACE);
-    m_srgb ? gl.glEnable(GL_FRAMEBUFFER_SRGB) : gl.glDisable(GL_FRAMEBUFFER_SRGB);
     const qint64 frameElapsed = m_frameTimer.restart();
     if (frameElapsed > 0) {
         m_frameTimesMs.push_back((float)frameElapsed);
@@ -674,7 +673,6 @@ void GLWidget::setShowSelection(bool on) { m_showSelection = on; update(); }
 void GLWidget::setShowAxes(bool on) { m_showAxes = on; update(); }
 void GLWidget::setDepthTest(bool on) { m_depthTest = on; update(); }
 void GLWidget::setFaceCulling(bool on) { m_faceCulling = on; update(); }
-void GLWidget::setSrgb(bool on) { m_srgb = on; update(); }
 void GLWidget::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); update(); }
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移

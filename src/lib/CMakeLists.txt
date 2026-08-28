@@ -6,6 +6,7 @@ add_library(gl3d_core SHARED
     mesh.cpp
     meshloader.h
     meshloader.cpp
+    meshloader_glb.cpp
     camera.h
     camera.cpp
     shader.h

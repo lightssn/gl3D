@@ -2,6 +2,7 @@
 
 #include "gl3d_export.h"
 #include <QMetaType>
+#include <QByteArray>
 #include <QVector3D>
 #include <QString>
 #include <vector>
@@ -20,6 +21,8 @@ struct SubMesh {
     std::vector<Vertex> vertices;
     std::vector<unsigned int> indices;
     QString texturePath;             //map_Kd解析到的磁盘路径 空则无纹理
+    QByteArray textureData;          //GLB内嵌基础色纹理
+    bool flipTextureVertically = true; //OBJ适配OpenGL原点，glTF纹理坐标无需翻转
     QVector3D diffuseColor{0.7f, 0.7f, 0.7f}; //mtl的Kd 无纹理时兜底着色
 };
 
