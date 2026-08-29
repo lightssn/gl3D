@@ -9,6 +9,12 @@
 #include <cmath>
 #include <cstring>
 #include <cfloat>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
                       const std::function<void(int)>& progress) {
@@ -44,12 +50,61 @@ struct MtlInfo {
     QString mapKd; //原始相对路径
     };
 
+// OBJ/MTL 文件经常由 3ds Max 按系统代码页保存（中文 Windows 通常是
+// CP936/GBK），而 Qt6 的 QTextStream 默认按 UTF-8 读取。先读取原始字节，
+// 能严格还原为 UTF-8 时使用 UTF-8，否则使用系统本地 8 位编码。
+static QString decodeTextFile(const QByteArray& data) {
+    QByteArray bytes = data;
+    if (bytes.startsWith("\xEF\xBB\xBF"))
+        bytes.remove(0, 3);
+
+    const QString utf8 = QString::fromUtf8(bytes);
+    QString local;
+#ifdef Q_OS_WIN
+    // 3ds Max's Chinese OBJ exporter writes text using Windows code page 936.
+    const int length = MultiByteToWideChar(936, 0, bytes.constData(), bytes.size(), nullptr, 0);
+    if (length > 0) {
+        std::wstring wide(static_cast<size_t>(length), L'\0');
+        MultiByteToWideChar(936, 0, bytes.constData(), bytes.size(), wide.data(), length);
+        local = QString::fromWCharArray(wide.data(), length);
+    }
+    else {
+        local = QString::fromLocal8Bit(bytes);
+    }
+#else
+    local = QString::fromLocal8Bit(bytes);
+#endif
+    if (utf8.toUtf8() != bytes)
+        return local;
+    if (utf8 == local)
+        return utf8;
+
+    // GBK byte pairs can occasionally form syntactically valid UTF-8. For
+    // example, the GBK bytes for the Chinese characters in 美女.mtl are also
+    // valid UTF-8 for unrelated Latin characters. Prefer the candidate that
+    // contains more CJK characters, which distinguishes these asset files
+    // without requiring Qt5's QTextCodec or Qt6's Core5Compat module.
+    auto cjkCount = [](const QString& value) {
+        int count = 0;
+        for (const QChar ch : value) {
+            const ushort u = ch.unicode();
+            if ((u >= 0x3400 && u <= 0x4DBF) ||
+                (u >= 0x4E00 && u <= 0x9FFF) ||
+                (u >= 0xF900 && u <= 0xFAFF))
+                ++count;
+        }
+        return count;
+    };
+    return cjkCount(local) > cjkCount(utf8) ? local : utf8;
+    }
+
 //解析mtl文件 返回 材质名→参数
 static std::unordered_map<std::string, MtlInfo> parseMtl(const QString& mtlPath) {
     std::unordered_map<std::string, MtlInfo> result;
     QFile f(mtlPath);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return result;
-    QTextStream in(&f);
+    QString text = decodeTextFile(f.readAll());
+    QTextStream in(&text, QIODevice::ReadOnly);
     MtlInfo* cur = nullptr;
     while (!in.atEnd()) {
         const QString line = in.readLine().trimmed();
@@ -70,10 +125,13 @@ static std::unordered_map<std::string, MtlInfo> parseMtl(const QString& mtlPath)
 
 //查找纹理实际路径 依次尝试 obj目录 → tex子目录
 static QString resolveTexture(const QString& objDir, const QString& relPath) {
-    QString p1 = objDir + "/" + relPath;
-    if (QFile::exists(p1)) return p1;
-    QString p2 = objDir + "/tex/" + QFileInfo(relPath).fileName();
-    if (QFile::exists(p2)) return p2;
+    const QString textureName = relPath.trimmed();
+    if (textureName.isEmpty()) return QString();
+
+    const QString p1 = objDir + "/" + textureName;
+    if (QFileInfo(p1).isFile()) return p1;
+    const QString p2 = objDir + "/tex/" + QFileInfo(textureName).fileName();
+    if (QFileInfo(p2).isFile()) return p2;
     return QString();
     }
 
@@ -91,6 +149,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
         if (err) *err = "无法打开: " + path;
         return false;
         }
+    QString text = decodeTextFile(f.readAll());
     const QString objDir = QFileInfo(path).absolutePath();
     const int totalLines = countLines(path); //进度基准 预读一次
 
@@ -100,7 +159,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
     std::vector<QVector3D> normals;
     std::unordered_map<std::string, MtlInfo> materials;
 
-    QTextStream in(&f);
+    QTextStream in(&text, QIODevice::ReadOnly);
     SubMesh* cur = nullptr;
     int parsedLines = 0; //已解析行数 进度用
 
