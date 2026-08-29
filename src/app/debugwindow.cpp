@@ -11,6 +11,7 @@
 #include <QPainter>
 #include <QPolygonF>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -53,13 +54,6 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
     auto* msaa = option(renderLayout, "抗锯齿 MSAA", 0, 0, true); auto* mipmap = option(renderLayout, "纹理 Mipmap", 0, 1, false); auto* depth = option(renderLayout, "深度测试", 1, 0, true); auto* culling = option(renderLayout, "背面剔除", 1, 1, false);
     connect(msaa, &QCheckBox::toggled, glWidget, &GLWidget::setAntialiasing); connect(mipmap, &QCheckBox::toggled, glWidget, &GLWidget::setMipmaps); connect(depth, &QCheckBox::toggled, glWidget, &GLWidget::setDepthTest); connect(culling, &QCheckBox::toggled, glWidget, &GLWidget::setFaceCulling); layout->addWidget(renderBox);
 
-    auto* subMeshBox = new QGroupBox("子网格", content); auto* subMeshLayout = new QVBoxLayout(subMeshBox); subMeshLayout->setContentsMargins(5, 8, 5, 5);
-    m_subMeshes = new QListWidget(subMeshBox); m_subMeshes->setSelectionMode(QAbstractItemView::NoSelection); m_subMeshes->setMaximumHeight(180);
-    connect(m_subMeshes, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
-        m_glWidget->setSubMeshVisible(m_subMeshes->row(item), item->checkState() == Qt::Checked);
-        });
-    subMeshLayout->addWidget(m_subMeshes); layout->addWidget(subMeshBox);
-
     auto* viewBox = new QGroupBox("调试视图", content); auto* viewLayout = new QGridLayout(viewBox); auto* debugView = new QComboBox(viewBox); debugView->addItems({"光照结果", "法线", "UV"}); viewLayout->addWidget(new QLabel("着色模式", viewBox), 0, 0); viewLayout->addWidget(debugView, 0, 1); connect(debugView, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), glWidget, &GLWidget::setDebugView); layout->addWidget(viewBox);
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
 
@@ -67,8 +61,30 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
     m_resources = new QTableWidget(4, 5, resourceBox); m_resources->setHorizontalHeaderLabels({"VAO", "VBO", "EBO", "纹理", "FBO"}); m_resources->setVerticalHeaderLabels({"数量", "内存占用", "显存占用", "显存合计"}); m_resources->setSpan(3, 0, 1, 5); m_resources->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); m_resources->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents); m_resources->setEditTriggers(QAbstractItemView::NoEditTriggers); m_resources->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_resources->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_resources->setFocusPolicy(Qt::NoFocus); m_resources->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents); resourceLayout->addWidget(m_resources); layout->addWidget(resourceBox);
 
     m_timingLabel = new QLabel(content); layout->addWidget(m_timingLabel); m_graph = new FrameGraph(content); layout->addWidget(m_graph);
+    auto* subMeshBox = new QGroupBox("子网格", content); auto* subMeshLayout = new QVBoxLayout(subMeshBox); subMeshLayout->setContentsMargins(5, 8, 5, 5);
+    m_subMeshes = new QListWidget(subMeshBox); m_subMeshes->setSelectionMode(QAbstractItemView::SingleSelection); m_subMeshes->setMinimumHeight(120); m_subMeshes->setMaximumHeight(180); m_subMeshes->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_subMeshes->setTextElideMode(Qt::ElideRight);
+    connect(m_subMeshes, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
+        m_glWidget->setSubMeshVisible(m_subMeshes->row(item), item->checkState() == Qt::Checked);
+        });
+    connect(m_subMeshes, &QListWidget::currentRowChanged, this, [this](int row) {
+        m_glWidget->selectSubMesh(row);
+        });
+    connect(glWidget, &GLWidget::subMeshSelected, this, [this](int index) {
+        QSignalBlocker blocker(m_subMeshes);
+        m_subMeshes->setCurrentRow(index);
+    });
+    subMeshLayout->addWidget(m_subMeshes);
+    layout->addWidget(subMeshBox);
     layout->addStretch(1); m_driverLabel = new QLabel(content); m_driverLabel->setWordWrap(true); layout->addWidget(m_driverLabel); root->addWidget(content, 1);
     m_timer = new QTimer(this); connect(m_timer, &QTimer::timeout, this, &DebugWindow::refresh); m_timer->start(250); hide();
+    connect(glWidget, &GLWidget::modelLoaded, this, [this](const QString&) { refreshSubMeshes(); });
+    connect(glWidget, &GLWidget::modelCleared, this, [this]() { refreshSubMeshes(); });
+}
+
+void DebugWindow::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    refreshSubMeshes();
+    refresh();
 }
 
 void DebugWindow::setNightMode(bool night) {
@@ -94,6 +110,11 @@ void DebugWindow::refresh() {
     for (int i = 0; i < s.resources.size() && i < 5; ++i) { const auto& r = s.resources[i]; m_resources->setItem(0, i, new QTableWidgetItem(QString::number(r.count))); m_resources->setItem(1, i, new QTableWidgetItem(bytesText(r.cpuBytes))); m_resources->setItem(2, i, new QTableWidgetItem(r.queryable ? bytesText(r.bytes) : "驱动管理")); if (r.queryable) totalGpu += r.bytes; }
     auto* totalItem = new QTableWidgetItem(bytesText(totalGpu)); totalItem->setTextAlignment(Qt::AlignCenter); m_resources->setItem(3, 0, totalItem);
     m_driverLabel->setText(QString("显卡：%1\nOpenGL：%2").arg(s.renderer, s.glVersion));
+    const int selected = m_glWidget->selectedSubMesh();
+    if (selected >= 0 && selected < m_subMeshes->count()) {
+        QSignalBlocker blocker(m_subMeshes);
+        m_subMeshes->setCurrentRow(selected);
+    }
 }
 
 void DebugWindow::refreshSubMeshes() {
@@ -112,4 +133,7 @@ void DebugWindow::refreshSubMeshes() {
         item->setCheckState(m_glWidget->subMeshVisible(i) ? Qt::Checked : Qt::Unchecked);
     }
     m_subMeshCount = count;
+    const int selected = m_glWidget->selectedSubMesh();
+    if (selected >= 0 && selected < count)
+        m_subMeshes->setCurrentRow(selected);
     }

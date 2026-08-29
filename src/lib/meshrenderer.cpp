@@ -53,7 +53,13 @@ void MeshRenderer::collectResourceIds(std::vector<unsigned int>& vaos,
         vaos.push_back(u.vao); vbos.push_back(u.vbo); ebos.push_back(u.ebo);
         if (u.texture) textures.push_back(u.texture);
     }
+
 }
+
+void MeshRenderer::setSubMeshTransform(int index, const QMatrix4x4& transform) {
+    if (index < 0 || index >= static_cast<int>(m_transforms.size())) return;
+    m_transforms[static_cast<size_t>(index)] = transform;
+    }
 
 void MeshRenderer::clear() {
     auto& gl = GLFunctions::instance();
@@ -65,6 +71,7 @@ void MeshRenderer::clear() {
     }
     m_units.clear();
     m_visible.clear();
+    m_transforms.clear();
 }
 
 void MeshRenderer::upload(const Mesh& mesh) {
@@ -72,6 +79,8 @@ void MeshRenderer::upload(const Mesh& mesh) {
     auto& gl = GLFunctions::instance();
 
     m_visible.assign(mesh.subMeshes.size(), true);
+    m_transforms.assign(mesh.subMeshes.size(), QMatrix4x4());
+    for (auto& transform : m_transforms) transform.setToIdentity();
     for (const auto& s : mesh.subMeshes) {
         DrawUnit u;
         u.indexCount = (int)s.indices.size();
@@ -119,11 +128,13 @@ void MeshRenderer::upload(const Mesh& mesh) {
     printf("[MeshRenderer] 上传 %zu 个子网格\n", m_units.size());
 }
 
-void MeshRenderer::render(Shader& shader) {
+void MeshRenderer::render(Shader& shader, int onlyIndex) {
     auto& gl = GLFunctions::instance();
     for (size_t i = 0; i < m_units.size(); ++i) {
+        if (onlyIndex >= 0 && static_cast<int>(i) != onlyIndex) continue;
         if (!m_visible[i]) continue;
         const auto& u = m_units[i];
+        shader.setMat4("uModel", m_transforms[i].constData());
         shader.setInt("uUseTexture", u.texture ? 1 : 0);
         shader.setVec3("uDiffuse", u.kd[0], u.kd[1], u.kd[2]);
         if (u.texture) {

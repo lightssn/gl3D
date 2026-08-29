@@ -155,7 +155,6 @@ void GLWidget::paintGL() {
     m_shader->bind();
     m_shader->setMat4("uView", view.constData());
     m_shader->setMat4("uProj", proj.constData());
-    m_shader->setMat4("uModel", m_modelMatrix.constData());
     m_shader->setFloat("uOutline", 0.0f);
     m_shader->setInt("uFlatColor", 0);
     m_shader->setInt("uDebugView", m_debugView);
@@ -181,7 +180,7 @@ void GLWidget::paintGL() {
         gl.glDepthFunc(GL_LESS); //防闪烁
         }
 
-    if (m_selected && m_showSelection) {
+    if (m_selectedSubMesh >= 0 && m_showSelection) {
         drawSelection(proj, view); //红边+粉色蒙版
         m_frameDrawCalls += m_renderer->drawUnitCount() * 3;
     }
@@ -406,7 +405,6 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     auto& gl = GLFunctions::instance();
     m_shader->setMat4("uView", view.constData());
     m_shader->setMat4("uProj", proj.constData());
-    m_shader->setMat4("uModel", m_modelMatrix.constData());
     m_shader->setInt("uFlatColor", 1);
 
     //1 选中模型写入stencil 颜色忽略 深度用LEQUAL同深度通过
@@ -417,7 +415,7 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     gl.glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     gl.glDepthFunc(GL_LEQUAL);
     m_shader->setFloat("uOutline", 0.0f);
-    m_renderer->render(*m_shader);
+    m_renderer->render(*m_shader, m_selectedSubMesh);
     gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     //2 沿法线膨胀画红边 只画stencil未覆盖的外缘
@@ -427,7 +425,7 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     gl.glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
     gl.glStencilMask(0x00);
     gl.glDepthFunc(GL_LEQUAL);
-    m_renderer->render(*m_shader);
+    m_renderer->render(*m_shader, m_selectedSubMesh);
     gl.glStencilMask(0xFF);
     gl.glDisable(GL_STENCIL_TEST);
 
@@ -438,7 +436,7 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     m_shader->setVec4("uFlatColorValue", 1.0f, 0.76f, 0.82f, 0.35f);
     gl.glDepthMask(GL_FALSE);
     gl.glDepthFunc(GL_LEQUAL);
-    m_renderer->render(*m_shader);
+    m_renderer->render(*m_shader, m_selectedSubMesh);
     gl.glDepthFunc(GL_LESS);
     gl.glDepthMask(GL_TRUE);
     gl.glDisable(GL_BLEND);
@@ -446,7 +444,8 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
 
 void GLWidget::drawGizmo(const QMatrix4x4& proj, const QMatrix4x4& view) {
     QMatrix4x4 mvp = proj * view;
-    mvp.translate(m_mesh.center() + m_transformPos); //操作器定位在变换后的模型中央
+    const QVector3D center = m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center();
+    mvp.translate(center + m_transformPos); //操作器定位在选中子网格中央
     drawOverlay(m_gizmoMesh, mvp, true, QVector3D());
     }
 
@@ -511,24 +510,31 @@ void GLWidget::pickAt(const QPoint& pos) {
         m_shader->setMat4("uView", m_camera.viewMatrix().constData());
         QMatrix4x4 proj = m_camera.projMatrix(m_pickH ? (float)m_pickW / m_pickH : 1.0f);
         m_shader->setMat4("uProj", proj.constData());
-        m_shader->setMat4("uModel", m_modelMatrix.constData());
         m_shader->setFloat("uOutline", 0.0f);
         m_shader->setInt("uFlatColor", 1);
         m_shader->setVec4("uFlatColorValue", 1, 0, 0, 1); //命中=红
-        m_renderer->render(*m_shader);
+        for (int i = 0; i < subMeshCount(); ++i) {
+            if (!m_renderer->subMeshVisible(i)) continue;
+            const int id = i + 1;
+            m_shader->setVec4("uFlatColorValue", (id & 255) / 255.0f,
+                              ((id >> 8) & 255) / 255.0f,
+                              ((id >> 16) & 255) / 255.0f, 1.0f);
+            m_renderer->render(*m_shader, i);
+        }
         m_shader->unbind();
 
         unsigned char pixel[4] = { 0, 0, 0, 0 };
         gl.glReadPixels(x, m_pickH - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel); //GL y轴向上
-        hit = pixel[0] > 128;
+        const int picked = static_cast<int>(pixel[0]) |
+                           (static_cast<int>(pixel[1]) << 8) |
+                           (static_cast<int>(pixel[2]) << 16);
+        hit = picked > 0;
+        if (hit) selectSubMesh(picked - 1);
         gl.glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
         gl.glViewport(0, 0, m_fbW, m_fbH);
         }
     doneCurrent();
-    if (hit != m_selected) { //状态变化才通知 联动工具栏
-        m_selected = hit;
-        emit selectionChanged(m_selected);
-        }
+    if (!hit && m_selectedSubMesh >= 0) selectSubMesh(-1);
     update();
     }
 
@@ -557,6 +563,25 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         return;
         }
     m_mesh = mesh;
+    m_subMeshCenters.clear();
+    m_subMeshCenters.reserve(m_mesh.subMeshes.size());
+    for (const auto& subMesh : m_mesh.subMeshes) {
+        if (subMesh.vertices.empty()) {
+            m_subMeshCenters.push_back(m_mesh.center());
+            continue;
+        }
+        QVector3D minPos(subMesh.vertices.front().px, subMesh.vertices.front().py, subMesh.vertices.front().pz);
+        QVector3D maxPos = minPos;
+        for (const auto& vertex : subMesh.vertices) {
+            minPos.setX(std::min(minPos.x(), vertex.px));
+            minPos.setY(std::min(minPos.y(), vertex.py));
+            minPos.setZ(std::min(minPos.z(), vertex.pz));
+            maxPos.setX(std::max(maxPos.x(), vertex.px));
+            maxPos.setY(std::max(maxPos.y(), vertex.py));
+            maxPos.setZ(std::max(maxPos.z(), vertex.pz));
+        }
+        m_subMeshCenters.push_back((minPos + maxPos) * 0.5f);
+    }
     if (isValid()) { //context未就绪则留待initializeGL上传
         makeCurrent();
         m_renderer->upload(m_mesh);
@@ -573,7 +598,7 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
     m_redoStack.clear();
     emit historyChanged(false, false);
     updateModelMatrix();
-    m_selected = false;
+    m_selectedSubMesh = -1;
     emit selectionChanged(false); //新模型默认未选中 操作器按钮隐藏
 
     QString info = QString("%1  顶点%2  三角%3  子网格%4")
@@ -616,6 +641,7 @@ void GLWidget::deleteModel() {
     releaseOverlay(m_gizmoMesh);
     doneCurrent();
     m_mesh = Mesh();
+    m_subMeshCenters.clear();
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
@@ -624,7 +650,7 @@ void GLWidget::deleteModel() {
     m_undoStack.clear();
     m_redoStack.clear();
     emit historyChanged(false, false);
-    m_selected = false;
+    m_selectedSubMesh = -1;
     emit selectionChanged(false); //联动隐藏操作器与删除按钮
     emit modelCleared();
     update();
@@ -672,6 +698,25 @@ void GLWidget::setSubMeshVisible(int index, bool visible) {
     update();
     }
 
+void GLWidget::selectSubMesh(int index) {
+    if (index < -1 || index >= subMeshCount()) return;
+    if (index == m_selectedSubMesh) {
+        emit subMeshSelected(index);
+        return;
+    }
+    m_selectedSubMesh = index;
+    m_transformPos = QVector3D();
+    m_transformRot = QQuaternion();
+    m_transformScale = QVector3D(1, 1, 1);
+    m_undoStack.clear();
+    m_redoStack.clear();
+    updateModelMatrix();
+    emit historyChanged(false, false);
+    emit selectionChanged(m_selectedSubMesh >= 0);
+    emit subMeshSelected(m_selectedSubMesh);
+    update();
+    }
+
 void GLWidget::setAntialiasing(bool on) {
     m_antialiasing = on;
     if (isValid()) { makeCurrent(); on ? GLFunctions::instance().glEnable(GL_MULTISAMPLE) : GLFunctions::instance().glDisable(GL_MULTISAMPLE); doneCurrent(); }
@@ -698,12 +743,21 @@ void GLWidget::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); up
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移
 void GLWidget::updateModelMatrix() {
     QMatrix4x4 m;
-    QVector3D c = m_mesh.center();
+    QVector3D c = m_selectedSubMesh >= 0 && m_selectedSubMesh < static_cast<int>(m_subMeshCenters.size())
+        ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center();
     m.translate(c + m_transformPos);
     m.rotate(m_transformRot);
     m.scale(m_transformScale);
     m.translate(-c);
     m_modelMatrix = m;
+    if (m_renderer) {
+        QMatrix4x4 identity;
+        identity.setToIdentity();
+        for (int i = 0; i < subMeshCount(); ++i)
+            m_renderer->setSubMeshTransform(i, identity);
+        if (m_selectedSubMesh >= 0)
+            m_renderer->setSubMeshTransform(m_selectedSubMesh, m_modelMatrix);
+    }
     }
 
 //由屏幕坐标生成拾取射线 正交时视口平移 透视时从眼位出发
@@ -784,7 +838,7 @@ float GLWidget::gizmoAngle(const QPoint& pos, int axis) {
 int GLWidget::gizmoHitAxis(const QPoint& pos) {
     if (m_transformMode == None || !hasModel()) return 0;
     const float s = m_mesh.radius() * 1.2f;
-    const QVector3D center = m_mesh.center() + m_transformPos;
+    const QVector3D center = (m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
     const QVector3D axes[3] = { {1, 0, 0}, {0, 1, 0}, {0, 0, 1} };
     QMatrix4x4 view = m_camera.viewMatrix();
     float aspect = m_fbH > 0 ? (float)m_fbW / m_fbH : 1.0f;
@@ -826,7 +880,7 @@ int GLWidget::gizmoHitAxis(const QPoint& pos) {
 //按下手柄 初始化该模式拖拽参数
 void GLWidget::beginGizmoDrag(const QPoint& pos, int axis) {
     m_dragStartState = currentTransform(); //撤销历史起点
-    m_dragCenter = m_mesh.center() + m_transformPos;
+    m_dragCenter = (m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
     if (m_transformMode == Rotate) {
         m_prevDragParam = gizmoAngle(pos, axis);
         return;

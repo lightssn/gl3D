@@ -4,6 +4,7 @@
 #include "mesh.h"
 #include <vector>
 #include <QImage>
+#include <QMatrix4x4>
 
 class Shader;
 
@@ -20,7 +21,8 @@ public:
     void setMipmapsEnabled(bool enabled);
     void setSubMeshVisible(int index, bool visible);
     bool subMeshVisible(int index) const;
-    void render(Shader& shader);     //逐子网格绘制
+    void setSubMeshTransform(int index, const QMatrix4x4& transform);
+    void render(Shader& shader, int onlyIndex = -1);     //逐子网格绘制
     void clear();                    //释放全部GL资源
     bool empty() const { return m_units.empty(); }
     int drawUnitCount() const { return static_cast<int>(m_units.size()); }
@@ -40,6 +42,7 @@ private:
     };
     std::vector<DrawUnit> m_units;
     std::vector<bool> m_visible;
+    std::vector<QMatrix4x4> m_transforms;
     bool m_mipmapsEnabled = false;
     void uploadTexture(DrawUnit& unit);
 };

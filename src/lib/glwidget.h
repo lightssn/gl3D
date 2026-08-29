@@ -44,7 +44,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
         OverlayMesh m_gizmoMesh;      //模型中央操作器
         TransformMode m_transformMode = None;
-        bool m_selected = false;
+        int m_selectedSubMesh = -1;
         bool m_wireframe = false;     //线框模式 打开后可见三角面带浅灰边
         float m_outlineWidth = 0.01f; //选中描边沿法线挤出量
 
@@ -65,6 +65,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         std::vector<TransformState> m_undoStack;
         std::vector<TransformState> m_redoStack;
         TransformState m_dragStartState; //当前拖拽起点 松开时对比是否变化
+        std::vector<QVector3D> m_subMeshCenters;
 
         //后台加载 解析在worker线程 解析完主线程上传显存
         QThread* m_loadThread = nullptr;
@@ -174,6 +175,8 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         QString subMeshName(int index) const;
         bool subMeshVisible(int index) const;
         void setSubMeshVisible(int index, bool visible);
+        int selectedSubMesh() const { return m_selectedSubMesh; }
+        void selectSubMesh(int index);
         DebugSnapshot debugSnapshot();
 
     signals:
@@ -181,6 +184,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void modelLoaded(const QString& info);  //模型统计信息
         void loadFailed(const QString& err);
         void selectionChanged(bool selected); //选中状态变化 联动工具栏操作器按钮
+        void subMeshSelected(int index);
         void contextMenuRequested(const QPoint& globalPos); //右键点击 弹出开关栏菜单
         void modelCleared(); //模型被删除 联动状态栏等
         void historyChanged(bool canUndo, bool canRedo); //撤销/重做可用性 联动按钮

@@ -1,12 +1,14 @@
 #pragma once
 #include "debugstats.h"
 #include <QWidget>
-class QLabel; class QTableWidget; class FrameGraph; class GLWidget; class QTimer; class QListWidget;
+class QLabel; class QTableWidget; class FrameGraph; class GLWidget; class QTimer; class QListWidget; class QShowEvent;
 class DebugWindow : public QWidget {
     Q_OBJECT
 public:
     explicit DebugWindow(GLWidget* glWidget, QWidget* parent = nullptr);
     void setNightMode(bool night);
+protected:
+    void showEvent(QShowEvent* event) override;
 private:
     void refresh();
     void refreshSubMeshes();
