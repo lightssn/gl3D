@@ -652,6 +652,26 @@ void GLWidget::setWireframe(bool on) {
     update();
     }
 
+int GLWidget::subMeshCount() const {
+    return static_cast<int>(m_mesh.subMeshes.size());
+    }
+
+QString GLWidget::subMeshName(int index) const {
+    if (index < 0 || index >= subMeshCount()) return QString();
+    const std::string& name = m_mesh.subMeshes[static_cast<size_t>(index)].materialName;
+    return name.empty() ? QStringLiteral("(默认材质)") : QString::fromStdString(name);
+    }
+
+bool GLWidget::subMeshVisible(int index) const {
+    return m_renderer && m_renderer->subMeshVisible(index);
+    }
+
+void GLWidget::setSubMeshVisible(int index, bool visible) {
+    if (!m_renderer) return;
+    m_renderer->setSubMeshVisible(index, visible);
+    update();
+    }
+
 void GLWidget::setAntialiasing(bool on) {
     m_antialiasing = on;
     if (isValid()) { makeCurrent(); on ? GLFunctions::instance().glEnable(GL_MULTISAMPLE) : GLFunctions::instance().glDisable(GL_MULTISAMPLE); doneCurrent(); }

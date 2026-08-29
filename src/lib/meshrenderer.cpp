@@ -23,6 +23,16 @@ void MeshRenderer::setMipmapsEnabled(bool enabled) {
     }
 }
 
+void MeshRenderer::setSubMeshVisible(int index, bool visible) {
+    if (index < 0 || index >= static_cast<int>(m_visible.size())) return;
+    m_visible[static_cast<size_t>(index)] = visible;
+}
+
+bool MeshRenderer::subMeshVisible(int index) const {
+    return index >= 0 && index < static_cast<int>(m_visible.size())
+        ? m_visible[static_cast<size_t>(index)] : false;
+}
+
 void MeshRenderer::uploadTexture(DrawUnit& unit) {
     if (unit.textureImage.isNull()) return;
     auto& gl = GLFunctions::instance();
@@ -54,12 +64,14 @@ void MeshRenderer::clear() {
         if (u.texture) gl.glDeleteTextures(1, &u.texture);
     }
     m_units.clear();
+    m_visible.clear();
 }
 
 void MeshRenderer::upload(const Mesh& mesh) {
     clear();
     auto& gl = GLFunctions::instance();
 
+    m_visible.assign(mesh.subMeshes.size(), true);
     for (const auto& s : mesh.subMeshes) {
         DrawUnit u;
         u.indexCount = (int)s.indices.size();
@@ -109,7 +121,9 @@ void MeshRenderer::upload(const Mesh& mesh) {
 
 void MeshRenderer::render(Shader& shader) {
     auto& gl = GLFunctions::instance();
-    for (const auto& u : m_units) {
+    for (size_t i = 0; i < m_units.size(); ++i) {
+        if (!m_visible[i]) continue;
+        const auto& u = m_units[i];
         shader.setInt("uUseTexture", u.texture ? 1 : 0);
         shader.setVec3("uDiffuse", u.kd[0], u.kd[1], u.kd[2]);
         if (u.texture) {

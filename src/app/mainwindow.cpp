@@ -119,8 +119,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(actReset, &QAction::triggered, m_glWidget, &GLWidget::resetView);
     m_actDebug->setCheckable(true);
     connect(m_actDebug, &QAction::toggled, m_debugWindow, &QWidget::setVisible);
-    connect(m_debugWindow, &DebugWindow::wireframeChanged, m_actWire, &QAction::setChecked);
-    connect(m_actWire, &QAction::toggled, m_debugWindow, &DebugWindow::syncWireframe);
     connect(m_themeBtn, &QPushButton::clicked, this, [this]() {
         applyTheme(!m_night);
         });

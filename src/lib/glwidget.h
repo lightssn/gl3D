@@ -170,6 +170,10 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void setDepthTest(bool on);
         void setFaceCulling(bool on);
         void setDebugView(int mode);
+        int subMeshCount() const;
+        QString subMeshName(int index) const;
+        bool subMeshVisible(int index) const;
+        void setSubMeshVisible(int index, bool visible);
         DebugSnapshot debugSnapshot();
 
     signals:

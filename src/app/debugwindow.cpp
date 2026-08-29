@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
+#include <QListWidget>
 #include <QPainter>
 #include <QPolygonF>
 #include <QSignalBlocker>
@@ -49,8 +50,15 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
     auto* content = new QWidget(this); auto* layout = new QVBoxLayout(content); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(5);
 
     auto* renderBox = new QGroupBox("渲染管线", content); auto* renderLayout = new QGridLayout(renderBox); renderLayout->setContentsMargins(6, 8, 6, 5);
-    auto* msaa = option(renderLayout, "抗锯齿 MSAA", 0, 0, true); auto* mipmap = option(renderLayout, "纹理 Mipmap", 0, 1, false); m_wireframe = option(renderLayout, "线框叠加", 1, 0, false); auto* depth = option(renderLayout, "深度测试", 1, 1, true); auto* culling = option(renderLayout, "背面剔除", 2, 0, false);
-    connect(msaa, &QCheckBox::toggled, glWidget, &GLWidget::setAntialiasing); connect(mipmap, &QCheckBox::toggled, glWidget, &GLWidget::setMipmaps); connect(m_wireframe, &QCheckBox::toggled, this, &DebugWindow::wireframeChanged); connect(depth, &QCheckBox::toggled, glWidget, &GLWidget::setDepthTest); connect(culling, &QCheckBox::toggled, glWidget, &GLWidget::setFaceCulling); layout->addWidget(renderBox);
+    auto* msaa = option(renderLayout, "抗锯齿 MSAA", 0, 0, true); auto* mipmap = option(renderLayout, "纹理 Mipmap", 0, 1, false); auto* depth = option(renderLayout, "深度测试", 1, 0, true); auto* culling = option(renderLayout, "背面剔除", 1, 1, false);
+    connect(msaa, &QCheckBox::toggled, glWidget, &GLWidget::setAntialiasing); connect(mipmap, &QCheckBox::toggled, glWidget, &GLWidget::setMipmaps); connect(depth, &QCheckBox::toggled, glWidget, &GLWidget::setDepthTest); connect(culling, &QCheckBox::toggled, glWidget, &GLWidget::setFaceCulling); layout->addWidget(renderBox);
+
+    auto* subMeshBox = new QGroupBox("子网格", content); auto* subMeshLayout = new QVBoxLayout(subMeshBox); subMeshLayout->setContentsMargins(5, 8, 5, 5);
+    m_subMeshes = new QListWidget(subMeshBox); m_subMeshes->setSelectionMode(QAbstractItemView::NoSelection); m_subMeshes->setMaximumHeight(180);
+    connect(m_subMeshes, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
+        m_glWidget->setSubMeshVisible(m_subMeshes->row(item), item->checkState() == Qt::Checked);
+        });
+    subMeshLayout->addWidget(m_subMeshes); layout->addWidget(subMeshBox);
 
     auto* viewBox = new QGroupBox("调试视图", content); auto* viewLayout = new QGridLayout(viewBox); auto* debugView = new QComboBox(viewBox); debugView->addItems({"光照结果", "法线", "UV"}); viewLayout->addWidget(new QLabel("着色模式", viewBox), 0, 0); viewLayout->addWidget(debugView, 0, 1); connect(debugView, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), glWidget, &GLWidget::setDebugView); layout->addWidget(viewBox);
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
@@ -62,8 +70,6 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
     layout->addStretch(1); m_driverLabel = new QLabel(content); m_driverLabel->setWordWrap(true); layout->addWidget(m_driverLabel); root->addWidget(content, 1);
     m_timer = new QTimer(this); connect(m_timer, &QTimer::timeout, this, &DebugWindow::refresh); m_timer->start(250); hide();
 }
-
-void DebugWindow::syncWireframe(bool enabled) { QSignalBlocker blocker(m_wireframe); m_wireframe->setChecked(enabled); }
 
 void DebugWindow::setNightMode(bool night) {
     if (night) {
@@ -81,6 +87,7 @@ void DebugWindow::setNightMode(bool night) {
 void DebugWindow::refresh() {
     if (!isVisible()) return;
     const DebugSnapshot s = m_glWidget->debugSnapshot();
+    refreshSubMeshes();
     m_cameraLabel->setText(QString("相机：%1  FOV：%2°  距离：%3\n眼睛 (%4, %5, %6)  目标 (%7, %8, %9)").arg(s.ortho ? "正交" : "透视").arg(s.fov, 0, 'f', 1).arg(s.distance, 0, 'f', 3).arg(s.eye.x(), 0, 'f', 2).arg(s.eye.y(), 0, 'f', 2).arg(s.eye.z(), 0, 'f', 2).arg(s.target.x(), 0, 'f', 2).arg(s.target.y(), 0, 'f', 2).arg(s.target.z(), 0, 'f', 2));
     m_timingLabel->setText(QString("FPS：%1   平均：%2 ms   1% Low：%3 FPS\nP95：%4 ms   P99：%5 ms   最慢：%6 ms\n绘制调用：%7").arg(s.fps).arg(s.averageFrameMs, 0, 'f', 2).arg(s.onePercentLowFps, 0, 'f', 1).arg(s.p95FrameMs, 0, 'f', 2).arg(s.p99FrameMs, 0, 'f', 2).arg(s.lowFrameMs, 0, 'f', 2).arg(s.drawCalls));
     m_graph->setSamples(s.frameTimesMs); m_resources->clearContents(); qint64 totalGpu = 0;
@@ -88,3 +95,21 @@ void DebugWindow::refresh() {
     auto* totalItem = new QTableWidgetItem(bytesText(totalGpu)); totalItem->setTextAlignment(Qt::AlignCenter); m_resources->setItem(3, 0, totalItem);
     m_driverLabel->setText(QString("显卡：%1\nOpenGL：%2").arg(s.renderer, s.glVersion));
 }
+
+void DebugWindow::refreshSubMeshes() {
+    const int count = m_glWidget->subMeshCount();
+    bool changed = count != m_subMeshCount;
+    if (!changed) {
+        for (int i = 0; i < count; ++i)
+            if (!m_subMeshes->item(i) || m_subMeshes->item(i)->text() != m_glWidget->subMeshName(i)) { changed = true; break; }
+    }
+    if (!changed) return;
+    QSignalBlocker blocker(m_subMeshes);
+    m_subMeshes->clear();
+    for (int i = 0; i < count; ++i) {
+        auto* item = new QListWidgetItem(m_glWidget->subMeshName(i), m_subMeshes);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(m_glWidget->subMeshVisible(i) ? Qt::Checked : Qt::Unchecked);
+    }
+    m_subMeshCount = count;
+    }

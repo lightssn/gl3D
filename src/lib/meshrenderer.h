@@ -18,6 +18,8 @@ public:
 
     void upload(const Mesh& mesh);   //CPU网格→显存 旧资源先释放
     void setMipmapsEnabled(bool enabled);
+    void setSubMeshVisible(int index, bool visible);
+    bool subMeshVisible(int index) const;
     void render(Shader& shader);     //逐子网格绘制
     void clear();                    //释放全部GL资源
     bool empty() const { return m_units.empty(); }
@@ -37,6 +39,7 @@ private:
         float kd[3] = {0.7f, 0.7f, 0.7f};
     };
     std::vector<DrawUnit> m_units;
+    std::vector<bool> m_visible;
     bool m_mipmapsEnabled = false;
     void uploadTexture(DrawUnit& unit);
 };
