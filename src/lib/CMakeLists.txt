@@ -23,7 +23,7 @@ target_compile_definitions(gl3d_core PRIVATE GL3D_CORE_BUILD)
 target_include_directories(gl3d_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(gl3d_core PUBLIC
-    Qt6::Widgets
-    Qt6::OpenGL
-    Qt6::OpenGLWidgets
+    ${GL3D_QT_WIDGETS_TARGET}
+    ${GL3D_QT_OPENGL_TARGET}
+    ${GL3D_QT_OPENGL_WIDGETS_TARGET}
 )
