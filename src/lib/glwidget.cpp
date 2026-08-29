@@ -678,6 +678,11 @@ void GLWidget::setWireframe(bool on) {
     update();
     }
 
+void GLWidget::setOutlineWidth(float width) {
+    m_outlineWidth = std::max(0.0f, width);
+    update();
+    }
+
 int GLWidget::subMeshCount() const {
     return static_cast<int>(m_mesh.subMeshes.size());
     }

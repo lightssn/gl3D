@@ -49,7 +49,9 @@ void MeshRenderer::collectResourceIds(std::vector<unsigned int>& vaos,
                                       std::vector<unsigned int>& vbos,
                                       std::vector<unsigned int>& ebos,
                                       std::vector<unsigned int>& textures) const {
-    for (const auto& u : m_units) {
+    for (size_t i = 0; i < m_units.size(); ++i) {
+        if (!m_visible[i]) continue;
+        const auto& u = m_units[i];
         vaos.push_back(u.vao); vbos.push_back(u.vbo); ebos.push_back(u.ebo);
         if (u.texture) textures.push_back(u.texture);
     }

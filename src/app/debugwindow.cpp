@@ -3,6 +3,7 @@
 #include <QAbstractScrollArea>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -53,6 +54,9 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
     auto* renderBox = new QGroupBox("渲染管线", content); auto* renderLayout = new QGridLayout(renderBox); renderLayout->setContentsMargins(6, 8, 6, 5);
     auto* msaa = option(renderLayout, "抗锯齿 MSAA", 0, 0, true); auto* mipmap = option(renderLayout, "纹理 Mipmap", 0, 1, false); auto* depth = option(renderLayout, "深度测试", 1, 0, true); auto* culling = option(renderLayout, "背面剔除", 1, 1, false);
     connect(msaa, &QCheckBox::toggled, glWidget, &GLWidget::setAntialiasing); connect(mipmap, &QCheckBox::toggled, glWidget, &GLWidget::setMipmaps); connect(depth, &QCheckBox::toggled, glWidget, &GLWidget::setDepthTest); connect(culling, &QCheckBox::toggled, glWidget, &GLWidget::setFaceCulling); layout->addWidget(renderBox);
+    m_outlineWidth = new QDoubleSpinBox(renderBox); m_outlineWidth->setRange(0.0, 1000.0); m_outlineWidth->setDecimals(4); m_outlineWidth->setSingleStep(0.01); m_outlineWidth->setSuffix(" 模型单位"); m_outlineWidth->setValue(glWidget->outlineWidth());
+    renderLayout->addWidget(new QLabel("描边宽度（模型单位）", renderBox), 2, 0); renderLayout->addWidget(m_outlineWidth, 2, 1);
+    connect(m_outlineWidth, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [glWidget](double width) { glWidget->setOutlineWidth(static_cast<float>(width)); });
 
     auto* viewBox = new QGroupBox("调试视图", content); auto* viewLayout = new QGridLayout(viewBox); auto* debugView = new QComboBox(viewBox); debugView->addItems({"光照结果", "法线", "UV"}); viewLayout->addWidget(new QLabel("着色模式", viewBox), 0, 0); viewLayout->addWidget(debugView, 0, 1); connect(debugView, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), glWidget, &GLWidget::setDebugView); layout->addWidget(viewBox);
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
@@ -62,7 +66,7 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
 
     m_timingLabel = new QLabel(content); layout->addWidget(m_timingLabel); m_graph = new FrameGraph(content); layout->addWidget(m_graph);
     auto* subMeshBox = new QGroupBox("子网格", content); auto* subMeshLayout = new QVBoxLayout(subMeshBox); subMeshLayout->setContentsMargins(5, 8, 5, 5);
-    m_subMeshes = new QListWidget(subMeshBox); m_subMeshes->setSelectionMode(QAbstractItemView::SingleSelection); m_subMeshes->setMinimumHeight(120); m_subMeshes->setMaximumHeight(180); m_subMeshes->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_subMeshes->setTextElideMode(Qt::ElideRight);
+    m_subMeshes = new QListWidget(subMeshBox); m_subMeshes->setSelectionMode(QAbstractItemView::SingleSelection); m_subMeshes->setMinimumHeight(120); m_subMeshes->setMaximumHeight(180); m_subMeshes->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_subMeshes->setTextElideMode(Qt::ElideRight); m_subMeshes->setStyleSheet("QListWidget { background: #0d1117; color: #e6edf3; } QListWidget::item:selected { background: #246a9e; color: #ffffff; } QListWidget::item:hover { background: #1d3f5a; }");
     connect(m_subMeshes, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
         m_glWidget->setSubMeshVisible(m_subMeshes->row(item), item->checkState() == Qt::Checked);
         });
@@ -77,7 +81,7 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
     layout->addWidget(subMeshBox);
     layout->addStretch(1); m_driverLabel = new QLabel(content); m_driverLabel->setWordWrap(true); layout->addWidget(m_driverLabel); root->addWidget(content, 1);
     m_timer = new QTimer(this); connect(m_timer, &QTimer::timeout, this, &DebugWindow::refresh); m_timer->start(250); hide();
-    connect(glWidget, &GLWidget::modelLoaded, this, [this](const QString&) { refreshSubMeshes(); });
+    connect(glWidget, &GLWidget::modelLoaded, this, [this](const QString&) { m_outlineWidth->setValue(m_glWidget->outlineWidth()); refreshSubMeshes(); });
     connect(glWidget, &GLWidget::modelCleared, this, [this]() { refreshSubMeshes(); });
 }
 
@@ -97,6 +101,11 @@ void DebugWindow::setNightMode(bool night) {
         ? QStringLiteral(" QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #8c9aaa; background: #202733; border-radius: 2px; } QCheckBox::indicator:checked { background: #48a6e8; border-color: #72c4f5; image: none; }")
         : QStringLiteral(" QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #687583; background: #ffffff; border-radius: 2px; } QCheckBox::indicator:checked { background: #2788c7; border-color: #17699e; image: none; }");
     setStyleSheet(styleSheet() + indicatorStyle);
+    if (m_subMeshes) {
+        m_subMeshes->setStyleSheet(night
+            ? "QListWidget { background: #0d1117; color: #e6edf3; } QListWidget::item:selected { background: #246a9e; color: #ffffff; } QListWidget::item:hover { background: #1d3f5a; }"
+            : "QListWidget { background: #ffffff; color: #20252b; } QListWidget::item:selected { background: #3b82b6; color: #ffffff; } QListWidget::item:hover { background: #d9eaf7; }");
+    }
     if (m_graph) m_graph->setNightMode(night);
 }
 

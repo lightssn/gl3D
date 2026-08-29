@@ -171,6 +171,8 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void setDepthTest(bool on);
         void setFaceCulling(bool on);
         void setDebugView(int mode);
+        float outlineWidth() const { return m_outlineWidth; }
+        void setOutlineWidth(float width);
         int subMeshCount() const;
         QString subMeshName(int index) const;
         bool subMeshVisible(int index) const;
