@@ -33,17 +33,19 @@ foreach(shader ${shader_files})
             $<TARGET_FILE_DIR:gl3d>/shaders/${sname})
 endforeach()
 
-# windeployqt自动拷贝Qt运行时dll与插件。Qt5(vcpkg)的windeployqt与qmake
-# 位于不同目录，因此需要显式把qmake所在目录加入它的PATH。
+# windeployqt自动拷贝Qt运行时dll与插件。windeployqt需要调用同版本qmake。
 find_program(WINDEPLOYQT windeployqt HINTS "${CMAKE_PREFIX_PATH}/bin")
 if(WINDEPLOYQT)
     get_filename_component(WINDEPLOYQT_BIN_DIR "${WINDEPLOYQT}" DIRECTORY)
-    set(QMAKE_EXECUTABLE "${WINDEPLOYQT_BIN_DIR}/../../qt5/bin/qmake.exe")
-    if(NOT EXISTS "${QMAKE_EXECUTABLE}")
+    # Qt6通常与windeployqt同目录；vcpkg Qt5可能需要从tools/qt5/bin回退查找。
+    if(EXISTS "${WINDEPLOYQT_BIN_DIR}/qmake.exe")
+        set(QMAKE_EXECUTABLE "${WINDEPLOYQT_BIN_DIR}/qmake.exe")
+    else()
         find_program(QMAKE_EXECUTABLE qmake
             HINTS
+                "${WINDEPLOYQT_BIN_DIR}/../../qt5/bin"
                 "${CMAKE_PREFIX_PATH}/bin"
-                "${WINDEPLOYQT_BIN_DIR}"
+            NO_DEFAULT_PATH
         )
     endif()
 endif()
@@ -53,7 +55,7 @@ if(WINDEPLOYQT AND QMAKE_EXECUTABLE)
     add_custom_command(TARGET gl3d POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E env
             "PATH=${QMAKE_BIN_DIR};$ENV{PATH}"
-            ${WINDEPLOYQT} --no-translations --no-system-d3d-compiler --no-angle
+            ${WINDEPLOYQT} --no-translations --no-system-d3d-compiler
             $<TARGET_FILE:gl3d>)
 elseif(WINDEPLOYQT)
     message(WARNING "windeployqt was found, but qmake was not found; Qt runtime deployment is skipped")
