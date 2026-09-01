@@ -42,6 +42,7 @@ uniform sampler2D uMetallicRoughnessTexture; //glTF ORM：G粗糙度 B金属度
 uniform sampler2D uNormalTexture;
 uniform int uUseMetallicRoughness;
 uniform int uUseNormalMap;
+uniform int uEnableNormalMap;
 uniform float uMetallic;
 uniform float uRoughness;
 
@@ -91,6 +92,15 @@ void main() {
     if (uDebugView == 1) { FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
     if (uDebugView == 2) { FragColor = vec4(fract(vUV), 0.0, 1.0); return; }
     vec3 base = uUseTexture == 1 ? texture(uTexture, vUV).rgb : uDiffuse; //底色=纹理rgb或纯色
+    //两种光照模式共用法线贴图，关闭开关时保留顶点法线
+    if (uEnableNormalMap == 1 && uUseNormalMap == 1) {
+        vec3 tangentNormal = texture(uNormalTexture, vUV).xyz * 2.0 - 1.0;
+        vec3 dp1 = dFdx(vPosition), dp2 = dFdy(vPosition);
+        vec2 duv1 = dFdx(vUV), duv2 = dFdy(vUV);
+        vec3 tangent = normalize(dp1 * duv2.y - dp2 * duv1.y);
+        vec3 bitangent = normalize(cross(n, tangent));
+        n = normalize(mat3(tangent, bitangent, n) * tangentNormal);
+    }
     if (uPbr == 0) {
         vec3 light = vec3(0.0, 0.0, 1.0); //头灯，视线z
         float diff = abs(dot(n, light)) * 0.75; //旧版漫反射
@@ -101,14 +111,6 @@ void main() {
     }
 
     if (uUseTexture == 1) base = srgbToLinear(base);
-    if (uUseNormalMap == 1) {
-        vec3 tangentNormal = texture(uNormalTexture, vUV).xyz * 2.0 - 1.0;
-        vec3 dp1 = dFdx(vPosition), dp2 = dFdy(vPosition);
-        vec2 duv1 = dFdx(vUV), duv2 = dFdy(vUV);
-        vec3 tangent = normalize(dp1 * duv2.y - dp2 * duv1.y);
-        vec3 bitangent = normalize(cross(n, tangent));
-        n = normalize(mat3(tangent, bitangent, n) * tangentNormal);
-    }
     float metallic = clamp(uMetallic, 0.0, 1.0);
     float roughness = clamp(uUseMetallicRoughness == 1 ? texture(uMetallicRoughnessTexture, vUV).g * uRoughness : uRoughness, 0.04, 1.0);
     if (uUseMetallicRoughness == 1) metallic = clamp(texture(uMetallicRoughnessTexture, vUV).b * uMetallic, 0.0, 1.0);

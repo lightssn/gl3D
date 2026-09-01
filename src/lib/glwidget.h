@@ -100,6 +100,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         bool m_depthTest = true;
         bool m_faceCulling = false;
         bool m_pbr = false;
+        bool m_normalMap = true;
         int m_debugView = 0;
         int m_frameDrawCalls = 0;
         int m_lastDrawCalls = 0;
@@ -172,6 +173,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void setDepthTest(bool on);
         void setFaceCulling(bool on);
         void setPbr(bool on);
+        void setNormalMap(bool on);
         void setDebugView(int mode);
         float outlineWidth() const { return m_outlineWidth; }
         void setOutlineWidth(float width);

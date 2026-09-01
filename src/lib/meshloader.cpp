@@ -48,6 +48,7 @@ bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
 struct MtlInfo {
     QVector3D kd{0.7f, 0.7f, 0.7f};
     QString mapKd; //原始相对路径
+    QString mapNormal; //map_Bump/bump/map_Kn/norm
     };
 
 // OBJ/MTL 文件经常由 3ds Max 按系统代码页保存（中文 Windows 通常是
@@ -118,6 +119,9 @@ static std::unordered_map<std::string, MtlInfo> parseMtl(const QString& mtlPath)
             }
         else if (cur && parts[0] == "map_Kd" && parts.size() >= 2) {
             cur->mapKd = parts.last(); //取末尾 兼容含空格前缀
+            }
+        else if (cur && (parts[0] == "map_Bump" || parts[0] == "bump" || parts[0] == "map_Kn" || parts[0] == "norm") && parts.size() >= 2) {
+            cur->mapNormal = parts.last(); //跳过-bm等参数，取末尾纹理路径
             }
         }
     return result;
@@ -209,6 +213,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
                 if (it != materials.end()) {
                     cur->diffuseColor = it->second.kd;
                     cur->texturePath = resolveTexture(objDir, it->second.mapKd);
+                    cur->normalPath = resolveTexture(objDir, it->second.mapNormal);
                     }
                 }
             finishVertMap();
