@@ -36,13 +36,14 @@ private:
     struct DrawUnit {
         unsigned int vao = 0, vbo = 0, ebo = 0;
         int indexCount = 0;
-        unsigned int texture = 0;    //0表示无纹理 用漫反射色
-        QImage textureImage;
+        unsigned int texture = 0, metallicRoughnessTexture = 0, normalTexture = 0;
+        QImage textureImage, metallicRoughnessImage, normalImage;
         float kd[3] = {0.7f, 0.7f, 0.7f};
+        float metallic = 0.0f, roughness = 1.0f;
     };
     std::vector<DrawUnit> m_units;
     std::vector<bool> m_visible;
     std::vector<QMatrix4x4> m_transforms;
     bool m_mipmapsEnabled = false;
-    void uploadTexture(DrawUnit& unit);
+    void uploadTexture(unsigned int& texture, const QImage& image);
 };

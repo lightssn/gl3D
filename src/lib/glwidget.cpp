@@ -158,6 +158,7 @@ void GLWidget::paintGL() {
     m_shader->setFloat("uOutline", 0.0f);
     m_shader->setInt("uFlatColor", 0);
     m_shader->setInt("uDebugView", m_debugView);
+    m_shader->setInt("uPbr", m_pbr ? 1 : 0);
     m_shader->setVec4("uFlatColorValue", 1, 1, 1, 1);
     m_renderer->render(*m_shader);
     m_frameDrawCalls += m_renderer->drawUnitCount();
@@ -743,6 +744,7 @@ void GLWidget::setShowSelection(bool on) { m_showSelection = on; update(); }
 void GLWidget::setShowAxes(bool on) { m_showAxes = on; update(); }
 void GLWidget::setDepthTest(bool on) { m_depthTest = on; update(); }
 void GLWidget::setFaceCulling(bool on) { m_faceCulling = on; update(); }
+void GLWidget::setPbr(bool on) { m_pbr = on; update(); }
 void GLWidget::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); update(); }
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移

@@ -8,7 +8,11 @@ MeshRenderer::~MeshRenderer() { clear(); }
 
 qint64 MeshRenderer::textureCpuBytes() const {
     qint64 total = 0;
-    for (const auto& unit : m_units) total += unit.textureImage.sizeInBytes();
+    for (const auto& unit : m_units) {
+        total += unit.textureImage.sizeInBytes();
+        total += unit.metallicRoughnessImage.sizeInBytes();
+        total += unit.normalImage.sizeInBytes();
+    }
     return total;
 }
 
@@ -18,8 +22,12 @@ void MeshRenderer::setMipmapsEnabled(bool enabled) {
     auto& gl = GLFunctions::instance();
     for (auto& unit : m_units) {
         if (unit.texture) gl.glDeleteTextures(1, &unit.texture);
-        unit.texture = 0;
-        uploadTexture(unit);
+        if (unit.metallicRoughnessTexture) gl.glDeleteTextures(1, &unit.metallicRoughnessTexture);
+        if (unit.normalTexture) gl.glDeleteTextures(1, &unit.normalTexture);
+        unit.texture = unit.metallicRoughnessTexture = unit.normalTexture = 0;
+        uploadTexture(unit.texture, unit.textureImage);
+        uploadTexture(unit.metallicRoughnessTexture, unit.metallicRoughnessImage);
+        uploadTexture(unit.normalTexture, unit.normalImage);
     }
 }
 
@@ -33,12 +41,11 @@ bool MeshRenderer::subMeshVisible(int index) const {
         ? m_visible[static_cast<size_t>(index)] : false;
 }
 
-void MeshRenderer::uploadTexture(DrawUnit& unit) {
-    if (unit.textureImage.isNull()) return;
+void MeshRenderer::uploadTexture(unsigned int& texture, const QImage& image) {
+    if (image.isNull()) return;
     auto& gl = GLFunctions::instance();
-    gl.glGenTextures(1, &unit.texture);
-    gl.glBindTexture(GL_TEXTURE_2D, unit.texture);
-    const QImage& image = unit.textureImage;
+    gl.glGenTextures(1, &texture);
+    gl.glBindTexture(GL_TEXTURE_2D, texture);
     gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width(), image.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, image.constBits());
     if (m_mipmapsEnabled) { gl.glGenerateMipmap(GL_TEXTURE_2D); gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); }
     else gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -54,6 +61,8 @@ void MeshRenderer::collectResourceIds(std::vector<unsigned int>& vaos,
         const auto& u = m_units[i];
         vaos.push_back(u.vao); vbos.push_back(u.vbo); ebos.push_back(u.ebo);
         if (u.texture) textures.push_back(u.texture);
+        if (u.metallicRoughnessTexture) textures.push_back(u.metallicRoughnessTexture);
+        if (u.normalTexture) textures.push_back(u.normalTexture);
     }
 
 }
@@ -70,6 +79,8 @@ void MeshRenderer::clear() {
         if (u.vbo) gl.glDeleteBuffers(1, &u.vbo);
         if (u.ebo) gl.glDeleteBuffers(1, &u.ebo);
         if (u.texture) gl.glDeleteTextures(1, &u.texture);
+        if (u.metallicRoughnessTexture) gl.glDeleteTextures(1, &u.metallicRoughnessTexture);
+        if (u.normalTexture) gl.glDeleteTextures(1, &u.normalTexture);
     }
     m_units.clear();
     m_visible.clear();
@@ -87,6 +98,7 @@ void MeshRenderer::upload(const Mesh& mesh) {
         DrawUnit u;
         u.indexCount = (int)s.indices.size();
         u.kd[0] = s.diffuseColor.x(); u.kd[1] = s.diffuseColor.y(); u.kd[2] = s.diffuseColor.z();
+        u.metallic = s.metallicFactor; u.roughness = s.roughnessFactor;
 
         gl.glGenVertexArrays(1, &u.vao);
         gl.glGenBuffers(1, &u.vbo);
@@ -119,12 +131,24 @@ void MeshRenderer::upload(const Mesh& mesh) {
                 QImage tex = img.convertToFormat(QImage::Format_RGBA8888);
                 if (s.flipTextureVertically) tex = tex.mirrored();
                 u.textureImage = tex;
-                uploadTexture(u);
+                uploadTexture(u.texture, u.textureImage);
             } else {
                 printf("[MeshRenderer] 纹理加载失败: %s\n",
                        s.texturePath.isEmpty() ? "GLB内嵌纹理" : qPrintable(s.texturePath));
             }
         }
+        auto loadMaterialImage = [&](const QByteArray& data, const QString& path, QImage& target) {
+            if (!data.isEmpty()) target = QImage::fromData(data);
+            else if (!path.isEmpty()) target = QImage(path);
+            if (!target.isNull()) {
+                target = target.convertToFormat(QImage::Format_RGBA8888);
+                if (s.flipTextureVertically) target = target.mirrored();
+            }
+        };
+        loadMaterialImage(s.metallicRoughnessData, s.metallicRoughnessPath, u.metallicRoughnessImage);
+        loadMaterialImage(s.normalData, s.normalPath, u.normalImage);
+        uploadTexture(u.metallicRoughnessTexture, u.metallicRoughnessImage);
+        uploadTexture(u.normalTexture, u.normalImage);
         m_units.push_back(u);
     }
     printf("[MeshRenderer] 上传 %zu 个子网格\n", m_units.size());
@@ -139,10 +163,24 @@ void MeshRenderer::render(Shader& shader, int onlyIndex) {
         shader.setMat4("uModel", m_transforms[i].constData());
         shader.setInt("uUseTexture", u.texture ? 1 : 0);
         shader.setVec3("uDiffuse", u.kd[0], u.kd[1], u.kd[2]);
+        shader.setFloat("uMetallic", u.metallic);
+        shader.setFloat("uRoughness", u.roughness);
+        shader.setInt("uUseMetallicRoughness", u.metallicRoughnessTexture ? 1 : 0);
+        shader.setInt("uUseNormalMap", u.normalTexture ? 1 : 0);
         if (u.texture) {
             gl.glActiveTexture(GL_TEXTURE0);
             gl.glBindTexture(GL_TEXTURE_2D, u.texture);
             shader.setInt("uTexture", 0);
+        }
+        if (u.metallicRoughnessTexture) {
+            gl.glActiveTexture(GL_TEXTURE1);
+            gl.glBindTexture(GL_TEXTURE_2D, u.metallicRoughnessTexture);
+            shader.setInt("uMetallicRoughnessTexture", 1);
+        }
+        if (u.normalTexture) {
+            gl.glActiveTexture(GL_TEXTURE2);
+            gl.glBindTexture(GL_TEXTURE_2D, u.normalTexture);
+            shader.setInt("uNormalTexture", 2);
         }
         gl.glBindVertexArray(u.vao);
         gl.glDrawElements(GL_TRIANGLES, u.indexCount, GL_UNSIGNED_INT, nullptr); //draw call

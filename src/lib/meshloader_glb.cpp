@@ -286,8 +286,14 @@ bool MeshLoader::loadGlb(const QString& path, Mesh& mesh, QString* err,
                 const QJsonObject pbr = material.value("pbrMetallicRoughness").toObject();
                 const QJsonArray factor = pbr.value("baseColorFactor").toArray();
                 if (factor.size() >= 3) subMesh.diffuseColor = QVector3D(factor[0].toDouble(), factor[1].toDouble(), factor[2].toDouble());
-                const int textureIndex = pbr.value("baseColorTexture").toObject().value("index").toInt(-1);
-                subMesh.textureData = imageData(content, textureIndex, subMesh.texturePath);
+                subMesh.metallicFactor = static_cast<float>(pbr.value("metallicFactor").toDouble(0.0));
+                subMesh.roughnessFactor = static_cast<float>(pbr.value("roughnessFactor").toDouble(1.0));
+                const int baseColorTexture = pbr.value("baseColorTexture").toObject().value("index").toInt(-1);
+                subMesh.textureData = imageData(content, baseColorTexture, subMesh.texturePath);
+                const int metallicRoughnessTexture = pbr.value("metallicRoughnessTexture").toObject().value("index").toInt(-1);
+                subMesh.metallicRoughnessData = imageData(content, metallicRoughnessTexture, subMesh.metallicRoughnessPath);
+                const int normalTexture = material.value("normalTexture").toObject().value("index").toInt(-1);
+                subMesh.normalData = imageData(content, normalTexture, subMesh.normalPath);
             }
 
             subMesh.vertices.resize(positions.count);
