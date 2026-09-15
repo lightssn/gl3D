@@ -961,7 +961,7 @@ void GLWidget::dragGizmo(const QPoint& pos) {
         else m_transformScale.setZ(v);
         }
     updateModelMatrix();
-    update();
+    if (!m_fixedFps) update();
     }
 
 //轴方向 缩放模式随模型旋转对齐本地轴 平移/旋转保持世界轴向
@@ -1051,7 +1051,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent* event) {
     else {
         return;
         }
-    update();
+    if (!m_fixedFps) update();
     }
 
 void GLWidget::mouseReleaseEvent(QMouseEvent* event) {
