@@ -4,6 +4,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QGuiApplication>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -12,6 +13,8 @@
 #include <QPainter>
 #include <QPolygonF>
 #include <QSignalBlocker>
+#include <QScreen>
+#include <QSpinBox>
 #include <QShowEvent>
 #include <QTableWidget>
 #include <QTimer>
@@ -52,8 +55,11 @@ DebugWindow::DebugWindow(GLWidget* glWidget, QWidget* parent) : QWidget(parent),
     auto* content = new QWidget(this); auto* layout = new QVBoxLayout(content); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(5);
 
     auto* renderBox = new QGroupBox("渲染管线", content); auto* renderLayout = new QGridLayout(renderBox); renderLayout->setContentsMargins(6, 8, 6, 5);
-    auto* msaa = option(renderLayout, "抗锯齿 MSAA", 0, 0, true); auto* mipmap = option(renderLayout, "纹理 Mipmap", 0, 1, false); auto* depth = option(renderLayout, "深度测试", 1, 0, true); auto* culling = option(renderLayout, "背面剔除", 1, 1, false); auto* pbr = option(renderLayout, "PBR 光照", 3, 0, false); auto* normalMap = option(renderLayout, "法线贴图", 3, 1, true);
-    connect(msaa, &QCheckBox::toggled, glWidget, &GLWidget::setAntialiasing); connect(mipmap, &QCheckBox::toggled, glWidget, &GLWidget::setMipmaps); connect(depth, &QCheckBox::toggled, glWidget, &GLWidget::setDepthTest); connect(culling, &QCheckBox::toggled, glWidget, &GLWidget::setFaceCulling); connect(pbr, &QCheckBox::toggled, glWidget, &GLWidget::setPbr); connect(normalMap, &QCheckBox::toggled, glWidget, &GLWidget::setNormalMap); layout->addWidget(renderBox);
+    auto* msaa = option(renderLayout, "抗锯齿 MSAA", 0, 0, true); auto* mipmap = option(renderLayout, "纹理 Mipmap", 0, 1, false); auto* depth = option(renderLayout, "深度测试", 1, 0, true); auto* culling = option(renderLayout, "背面剔除", 1, 1, false); auto* pbr = option(renderLayout, "PBR 光照", 3, 0, false); auto* normalMap = option(renderLayout, "法线贴图", 3, 1, true); auto* fixedFps = option(renderLayout, "固定帧率", 4, 0, false); auto* fpsSpin = new QSpinBox(renderBox);
+    QScreen* screen = glWidget->screen() ? glWidget->screen() : QGuiApplication::primaryScreen();
+    const int refreshRate = screen && screen->refreshRate() > 0.0 ? qRound(screen->refreshRate()) : 60;
+    fpsSpin->setRange(0, refreshRate); fpsSpin->setValue(refreshRate); fpsSpin->setSuffix(" FPS"); fpsSpin->setToolTip("0表示不限制定时器频率"); renderLayout->addWidget(fpsSpin, 4, 1);
+    connect(msaa, &QCheckBox::toggled, glWidget, &GLWidget::setAntialiasing); connect(mipmap, &QCheckBox::toggled, glWidget, &GLWidget::setMipmaps); connect(depth, &QCheckBox::toggled, glWidget, &GLWidget::setDepthTest); connect(culling, &QCheckBox::toggled, glWidget, &GLWidget::setFaceCulling); connect(pbr, &QCheckBox::toggled, glWidget, &GLWidget::setPbr); connect(normalMap, &QCheckBox::toggled, glWidget, &GLWidget::setNormalMap); connect(fixedFps, &QCheckBox::toggled, glWidget, &GLWidget::setFixedFpsEnabled); connect(fpsSpin, qOverload<int>(&QSpinBox::valueChanged), glWidget, &GLWidget::setTargetFps); layout->addWidget(renderBox);
     m_outlineWidth = new QDoubleSpinBox(renderBox); m_outlineWidth->setRange(0.0, 1000.0); m_outlineWidth->setDecimals(4); m_outlineWidth->setSingleStep(0.01); m_outlineWidth->setSuffix(" 模型单位"); m_outlineWidth->setValue(glWidget->outlineWidth());
     renderLayout->addWidget(new QLabel("描边宽度（模型单位）", renderBox), 2, 0); renderLayout->addWidget(m_outlineWidth, 2, 1);
     connect(m_outlineWidth, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [glWidget](double width) { glWidget->setOutlineWidth(static_cast<float>(width)); });

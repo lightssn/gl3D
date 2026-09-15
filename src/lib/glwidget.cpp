@@ -11,6 +11,7 @@
 #include <QContextMenuEvent>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QTimer>
 #include <QThread>
 #include <QVector4D>
 #include <algorithm>
@@ -44,6 +45,10 @@ GLWidget::GLWidget(QWidget* parent) : QOpenGLWidget(parent) {
     setFocusPolicy(Qt::StrongFocus); //接收键盘
     m_fpsTimer.start();
     m_frameTimer.start();
+    m_renderTimer = new QTimer(this);
+    m_renderTimer->setTimerType(Qt::PreciseTimer);
+    m_renderTimer->setInterval(16); //约60 FPS，只触发按需重绘
+    connect(m_renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
     qRegisterMetaType<DebugSnapshot>("DebugSnapshot");
 
     //后台加载线程 解析在worker线程 跨线程信号按队列转发
@@ -747,6 +752,24 @@ void GLWidget::setDepthTest(bool on) { m_depthTest = on; update(); }
 void GLWidget::setFaceCulling(bool on) { m_faceCulling = on; update(); }
 void GLWidget::setPbr(bool on) { m_pbr = on; update(); }
 void GLWidget::setNormalMap(bool on) { m_normalMap = on; update(); }
+void GLWidget::setFixedFpsEnabled(bool on) {
+    m_fixedFps = on;
+    if (m_renderTimer) {
+        if (on) {
+            const int interval = m_targetFps > 0 ? std::max(1, 1000 / m_targetFps) : 0;
+            m_renderTimer->start(interval);
+        }
+        else m_renderTimer->stop();
+    }
+    update();
+}
+void GLWidget::setTargetFps(int fps) {
+    m_targetFps = std::max(0, fps);
+    if (m_fixedFps && m_renderTimer) {
+        const int interval = m_targetFps > 0 ? std::max(1, 1000 / m_targetFps) : 0;
+        m_renderTimer->start(interval);
+    }
+}
 void GLWidget::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); update(); }
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移

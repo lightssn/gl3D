@@ -15,6 +15,7 @@ class Shader;//前向声明，cpp再引入头文件，改动后编译更快
 class MeshRenderer;
 class QContextMenuEvent;
 class QThread;
+class QTimer;
 class ModelLoaderWorker; //后台解析线程的工作对象 定义在cpp
 
 //OpenGL渲染视口 负责context生命周期/渲染循环/键鼠交互
@@ -91,6 +92,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         int m_lastFps = 0;
         QElapsedTimer m_fpsTimer;
         QElapsedTimer m_frameTimer;
+        QTimer* m_renderTimer = nullptr;
         std::vector<float> m_frameTimesMs;
         bool m_antialiasing = true;
         bool m_showGrid = true;
@@ -101,6 +103,8 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         bool m_faceCulling = false;
         bool m_pbr = false;
         bool m_normalMap = true;
+        bool m_fixedFps = false;
+        int m_targetFps = 60;
         int m_debugView = 0;
         int m_frameDrawCalls = 0;
         int m_lastDrawCalls = 0;
@@ -174,6 +178,8 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void setFaceCulling(bool on);
         void setPbr(bool on);
         void setNormalMap(bool on);
+        void setFixedFpsEnabled(bool on);
+        void setTargetFps(int fps);
         void setDebugView(int mode);
         float outlineWidth() const { return m_outlineWidth; }
         void setOutlineWidth(float width);
