@@ -4,6 +4,11 @@
 #include "camera.h"
 #include "mesh.h"
 #include "debugstats.h"
+#include "renderoptions.h"
+#include "cameracontroller.h"
+#include "selectioncontroller.h"
+#include "openglshader.h"
+#include "openglmeshrenderer.h"
 #include <QOpenGLWidget>
 #include <QElapsedTimer>
 #include <QQuaternion>
@@ -35,17 +40,19 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
             int count = 0; //顶点数 以2为单位绘制GL_LINES
         };
 
-        std::unique_ptr<Shader> m_shader;
-        std::unique_ptr<Shader> m_overlayShader;
-        std::unique_ptr<MeshRenderer> m_renderer;
+        std::unique_ptr<OpenGLShader> m_shader;
+        std::unique_ptr<OpenGLShader> m_overlayShader;
+        std::unique_ptr<OpenGLMeshRenderer> m_renderer;
         Mesh m_mesh;                  //CPU侧网格 取景与统计用
-        Camera m_camera;
+        CameraController m_cameraController;
+        Camera& m_camera = m_cameraController.camera();
+        SelectionController m_selectionController;
 
         OverlayMesh m_gridMesh;       //XY平面网格
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
         OverlayMesh m_gizmoMesh;      //模型中央操作器
         TransformMode m_transformMode = None;
-        int m_selectedSubMesh = -1;
+        int& m_selectedSubMesh = m_selectionController.indexRef();
         bool m_wireframe = false;     //线框模式 打开后可见三角面带浅灰边
         float m_outlineWidth = 0.01f; //选中描边沿法线挤出量
 
@@ -66,7 +73,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         std::vector<TransformState> m_undoStack;
         std::vector<TransformState> m_redoStack;
         TransformState m_dragStartState; //当前拖拽起点 松开时对比是否变化
-        std::vector<QVector3D> m_subMeshCenters;
+        std::vector<QVector3D>& m_subMeshCenters = m_selectionController.centers();
 
         //后台加载 解析在worker线程 解析完主线程上传显存
         QThread* m_loadThread = nullptr;
@@ -94,18 +101,19 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         QElapsedTimer m_frameTimer;
         QTimer* m_renderTimer = nullptr;
         std::vector<float> m_frameTimesMs;
-        bool m_antialiasing = true;
-        bool m_showGrid = true;
-        bool m_showGizmo = true;
-        bool m_showSelection = true;
-        bool m_showAxes = true;
-        bool m_depthTest = true;
-        bool m_faceCulling = false;
-        bool m_pbr = false;
-        bool m_normalMap = true;
-        bool m_fixedFps = false;
-        int m_targetFps = 60;
-        int m_debugView = 0;
+        RenderOptions m_renderOptions;
+        bool& m_antialiasing = m_renderOptions.antialiasing;
+        bool& m_showGrid = m_renderOptions.showGrid;
+        bool& m_showGizmo = m_renderOptions.showGizmo;
+        bool& m_showSelection = m_renderOptions.showSelection;
+        bool& m_showAxes = m_renderOptions.showAxes;
+        bool& m_depthTest = m_renderOptions.depthTest;
+        bool& m_faceCulling = m_renderOptions.faceCulling;
+        bool& m_pbr = m_renderOptions.pbr;
+        bool& m_normalMap = m_renderOptions.normalMap;
+        bool& m_fixedFps = m_renderOptions.fixedFps;
+        int& m_targetFps = m_renderOptions.targetFps;
+        int& m_debugView = m_renderOptions.debugView;
         int m_frameDrawCalls = 0;
         int m_lastDrawCalls = 0;
         DebugSnapshot collectDebugSnapshot();
@@ -182,6 +190,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void setTargetFps(int fps);
         void setDebugView(int mode);
         float outlineWidth() const { return m_outlineWidth; }
+        const RenderOptions& renderOptions() const { return m_renderOptions; }
         void setOutlineWidth(float width);
         int subMeshCount() const;
         QString subMeshName(int index) const;

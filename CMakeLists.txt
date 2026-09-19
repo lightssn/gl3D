@@ -16,6 +16,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+option(GL3D_ENABLE_VULKAN "Build the optional Vulkan backend" ON)
+
 find_package(Qt6 QUIET COMPONENTS Widgets OpenGL OpenGLWidgets)
 if(Qt6_FOUND)
     set(GL3D_QT_MAJOR_VERSION 6)
@@ -31,6 +33,17 @@ else()
 endif()
 
 message(STATUS "Using Qt ${GL3D_QT_MAJOR_VERSION}")
+
+set(GL3D_HAS_VULKAN OFF)
+if(GL3D_ENABLE_VULKAN)
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+        set(GL3D_HAS_VULKAN ON)
+        message(STATUS "Vulkan backend enabled")
+    else()
+        message(STATUS "Vulkan SDK not found; Vulkan backend disabled")
+    endif()
+endif()
 
 add_subdirectory(src/lib)
 add_subdirectory(src/app)

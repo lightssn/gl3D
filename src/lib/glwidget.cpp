@@ -597,6 +597,7 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         }
     m_camera.fitToSphere(m_mesh.center(), m_mesh.radius());
     m_outlineWidth = m_mesh.radius() * 0.02f;
+    m_renderOptions.outlineWidth = m_outlineWidth;
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
@@ -682,11 +683,13 @@ void GLWidget::setTransformMode(int mode) {
 
 void GLWidget::setWireframe(bool on) {
     m_wireframe = on;
+    m_renderOptions.wireframe = on;
     update();
     }
 
 void GLWidget::setOutlineWidth(float width) {
     m_outlineWidth = std::max(0.0f, width);
+    m_renderOptions.outlineWidth = m_outlineWidth;
     update();
     }
 
