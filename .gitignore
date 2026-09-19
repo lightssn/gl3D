@@ -1,5 +1,6 @@
 build*/
 .vs/
 *.user
+CMakeUserPresets.json
 data/
 doc/

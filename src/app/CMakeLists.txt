@@ -55,7 +55,7 @@ if(WINDEPLOYQT AND QMAKE_EXECUTABLE)
     add_custom_command(TARGET gl3d POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E env
             "PATH=${QMAKE_BIN_DIR};$ENV{PATH}"
-            ${WINDEPLOYQT} --no-translations --no-system-d3d-compiler
+            ${WINDEPLOYQT} --no-translations --no-angle --no-system-d3d-compiler
             $<TARGET_FILE:gl3d>)
 elseif(WINDEPLOYQT)
     message(WARNING "windeployqt was found, but qmake was not found; Qt runtime deployment is skipped")
