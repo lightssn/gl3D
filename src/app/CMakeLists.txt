@@ -33,6 +33,24 @@ foreach(shader ${shader_files})
             $<TARGET_FILE_DIR:gl3d>/shaders/${sname})
 endforeach()
 
+if(GL3D_HAS_VULKAN)
+    find_program(GLSLC_EXECUTABLE glslc
+        HINTS
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/shaderc"
+            "$ENV{VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}/tools/shaderc")
+    if(GLSLC_EXECUTABLE)
+        foreach(vulkan_shader vulkan_model.vert vulkan_model.frag)
+            add_custom_command(TARGET gl3d POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gl3d>/shaders
+                COMMAND ${GLSLC_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/shaders/${vulkan_shader}
+                    -o $<TARGET_FILE_DIR:gl3d>/shaders/${vulkan_shader}.spv)
+        endforeach()
+    else()
+        message(WARNING "glslc not found; Vulkan model shaders will not be built")
+    endif()
+endif()
+
 # windeployqt自动拷贝Qt运行时dll与插件。windeployqt需要调用同版本qmake。
 find_program(WINDEPLOYQT windeployqt HINTS "${CMAKE_PREFIX_PATH}/bin")
 if(WINDEPLOYQT)
@@ -55,7 +73,7 @@ if(WINDEPLOYQT AND QMAKE_EXECUTABLE)
     add_custom_command(TARGET gl3d POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E env
             "PATH=${QMAKE_BIN_DIR};$ENV{PATH}"
-            ${WINDEPLOYQT} --no-translations --no-angle --no-system-d3d-compiler
+            ${WINDEPLOYQT} --no-translations
             $<TARGET_FILE:gl3d>)
 elseif(WINDEPLOYQT)
     message(WARNING "windeployqt was found, but qmake was not found; Qt runtime deployment is skipped")

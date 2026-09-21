@@ -1,33 +1,44 @@
 #include "mainwindow.h"
 #include "glwidget.h"
 #include "debugwindow.h"
+#include "meshloader.h"
 
 #include <QToolBar>
 #include <QStatusBar>
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QToolButton>
 #include <QAction>
+#include <QActionGroup>
 #include <QMenu>
 #include <QFileDialog>
 #include <QFile>
+#include <QFileInfo>
 #include <QApplication>
 #include <QMessageBox>
 #include <QHBoxLayout>
+
+#if defined(GL3D_HAS_VULKAN)
+#include <QVulkanInstance>
+#include "vulkanwindow.h"
+#endif
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     resize(1100, 720);
     setWindowTitle("gl3d 模型查看器");
 
-    auto* viewContainer = new QWidget(this);
-    auto* viewLayout = new QHBoxLayout(viewContainer);
-    viewLayout->setContentsMargins(0, 0, 0, 0);
-    viewLayout->setSpacing(0);
-    m_glWidget = new GLWidget(viewContainer);
-    m_debugWindow = new DebugWindow(m_glWidget, viewContainer);
-    viewLayout->addWidget(m_debugWindow, 0);
-    viewLayout->addWidget(m_glWidget, 1);
-    setCentralWidget(viewContainer);
+    m_viewContainer = new QWidget(this);
+    m_viewLayout = new QHBoxLayout(m_viewContainer);
+    m_viewLayout->setContentsMargins(0, 0, 0, 0);
+    m_viewLayout->setSpacing(0);
+    m_glWidget = new GLWidget;
+    m_glContainer = QWidget::createWindowContainer(m_glWidget, m_viewContainer);
+    m_glContainer->setFocusPolicy(Qt::StrongFocus);
+    m_debugWindow = new DebugWindow(m_glWidget, m_viewContainer);
+    m_viewLayout->addWidget(m_debugWindow, 0);
+    m_viewLayout->addWidget(m_glContainer, 1);
+    setCentralWidget(m_viewContainer);
 
     // 工具栏 打开/复位/主题/投影/操作器
     m_toolBar = addToolBar("主工具栏");
@@ -36,6 +47,32 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     QAction* actReset = m_toolBar->addAction("复位视角");
     m_actDebug = m_toolBar->addAction("调试器");
     m_themeBtn = new QPushButton("日间模式", this);
+    m_toolBar->addSeparator();
+    m_actOpenGL = new QAction("OpenGL", this);
+    m_actVulkan = new QAction("Vulkan", this);
+    m_actOpenGL->setCheckable(true);
+    m_actVulkan->setCheckable(true);
+    m_actOpenGL->setChecked(true);
+    m_backendGroup = new QActionGroup(this);
+    m_backendGroup->setExclusive(true);
+    m_backendGroup->addAction(m_actOpenGL);
+    m_backendGroup->addAction(m_actVulkan);
+    m_backendButton = new QToolButton(this);
+    m_backendButton->setText("后端: OpenGL");
+    m_backendButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    connect(m_backendButton, &QToolButton::clicked, this, [this]() {
+        if (m_modelOpen)
+            return;
+        if (m_vulkanBackend)
+            m_actOpenGL->setChecked(true);
+        else
+            m_actVulkan->setChecked(true);
+    });
+    m_toolBar->addWidget(m_backendButton);
+#if !defined(GL3D_HAS_VULKAN)
+    m_actVulkan->setEnabled(false);
+    m_actVulkan->setToolTip("当前构建未找到 Vulkan");
+#endif
     m_toolBar->addWidget(m_themeBtn);
     m_toolBar->addSeparator();
 
@@ -89,7 +126,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_actMove, &QAction::toggled, this, [this](bool on) { onTransformToggled(m_actMove, on); });
     connect(m_actRot, &QAction::toggled, this, [this](bool on) { onTransformToggled(m_actRot, on); });
     connect(m_actScale, &QAction::toggled, this, [this](bool on) { onTransformToggled(m_actScale, on); });
-    connect(m_actDelete, &QAction::triggered, m_glWidget, &GLWidget::deleteModel);
+    connect(m_actDelete, &QAction::triggered, this, [this]() {
+#if defined(GL3D_HAS_VULKAN)
+        if (m_vulkanBackend) {
+            if (m_vulkanWindow)
+                m_vulkanWindow->clearModel();
+            m_modelOpen = false;
+            m_modelInfo->setText("未加载模型");
+            updateBackendUi();
+        } else {
+#else
+        {
+#endif
+            m_glWidget->deleteModel();
+        }
+    });
     connect(m_actUndo, &QAction::triggered, m_glWidget, &GLWidget::undo);
     connect(m_actRedo, &QAction::triggered, m_glWidget, &GLWidget::redo);
     // 撤销/重做可用性联动 禁用按钮由主题qss置灰
@@ -110,6 +161,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     statusBar()->addWidget(m_modelInfo, 1);
     statusBar()->addPermanentWidget(m_loadProgress);
     statusBar()->addPermanentWidget(m_fpsLabel);
+    m_backendLabel = new QLabel("后端: OpenGL", this);
+    statusBar()->addPermanentWidget(m_backendLabel);
 
     connect(actOpen, &QAction::triggered, this, [this]() {
         QString path = QFileDialog::getOpenFileName(
@@ -122,14 +175,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_themeBtn, &QPushButton::clicked, this, [this]() {
         applyTheme(!m_night);
         });
+    connect(m_actOpenGL, &QAction::toggled, this, [this](bool on) {
+        if (on) setBackend(false);
+        });
+    connect(m_actVulkan, &QAction::toggled, this, [this](bool on) {
+        if (on) setBackend(true);
+        });
 
     connect(m_glWidget, &GLWidget::fpsUpdated, this, [this](int fps) {
         m_fpsLabel->setText(QString("FPS %1").arg(fps));
         });
     connect(m_glWidget, &GLWidget::modelLoaded, this, [this](const QString& info) {
         m_modelInfo->setText(info);
+        m_modelOpen = true;
+        updateBackendUi();
         });
     connect(m_glWidget, &GLWidget::loadFailed, this, [this](const QString& err) {
+        m_modelOpen = false;
+        updateBackendUi();
         QMessageBox::warning(this, "加载失败", err);
         });
     // 选中状态联动 选中显示操作器与删除按钮 取消选中隐藏并关闭操作器
@@ -148,7 +211,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         });
 
     // 加载进度条: 开始显示清零 期间更新 结束隐藏
+    connect(m_glWidget, &GLWidget::modelCleared, this, [this]() {
+        m_modelOpen = false;
+        updateBackendUi();
+        });
     connect(m_glWidget, &GLWidget::loadStarted, this, [this]() {
+        m_modelOpen = true;
+        updateBackendUi();
         m_loadProgress->setValue(0);
         m_loadProgress->setVisible(true);
         m_modelInfo->setText("正在加载模型...");
@@ -175,7 +244,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->setVisible(on);
         });
     // 替换工具栏自带右键菜单 避免误关工具栏后无法找回
-    m_glWidget->setContextMenuPolicy(Qt::DefaultContextMenu); //视口走contextMenuEvent
     m_toolBar->setContextMenuPolicy(Qt::CustomContextMenu);
     statusBar()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_glWidget, &GLWidget::contextMenuRequested, this, [this](const QPoint& globalPos) {
@@ -192,8 +260,110 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     }
 
 void MainWindow::openModel(const QString& path) {
-    m_glWidget->loadModel(path);
+    if (!m_vulkanBackend) {
+        m_glWidget->loadModel(path);
+        return;
     }
+
+#if defined(GL3D_HAS_VULKAN)
+    QString error;
+    if (!m_vulkanWindow->loadModel(path, &error)) {
+        QMessageBox::warning(this, "加载失败", error);
+        return;
+    }
+    m_modelOpen = true;
+    m_modelInfo->setText(QString("Vulkan 后端已读取：%1  顶点%2 三角形%3（Vulkan模型绘制管线待接入）")
+        .arg(QFileInfo(path).fileName()).arg(m_vulkanWindow->scene().mesh().vertexCount()).arg(m_vulkanWindow->scene().mesh().triangleCount()));
+    updateBackendUi();
+#else
+    Q_UNUSED(path);
+#endif
+    }
+
+MainWindow::~MainWindow() {
+#if defined(GL3D_HAS_VULKAN)
+    if (m_vulkanContainer) {
+        delete m_vulkanContainer;
+        m_vulkanContainer = nullptr;
+        m_vulkanWindow = nullptr;
+    }
+#endif
+}
+
+void MainWindow::setBackend(bool vulkan) {
+    if (m_modelOpen || m_vulkanBackend == vulkan)
+        return;
+
+#if defined(GL3D_HAS_VULKAN)
+    if (vulkan) {
+        m_vulkanInstance = new QVulkanInstance;
+        m_vulkanInstance->setLayers({"VK_LAYER_KHRONOS_validation"});
+        if (!m_vulkanInstance->create()) {
+            delete m_vulkanInstance;
+            m_vulkanInstance = nullptr;
+            m_actOpenGL->setChecked(true);
+            QMessageBox::warning(this, "Vulkan不可用", "Vulkan Instance 创建失败，请检查驱动或验证层。");
+            return;
+        }
+        m_vulkanWindow = new VulkanWindow(m_vulkanInstance);
+        if (!m_vulkanWindow->isReady()) {
+            delete m_vulkanWindow;
+            m_vulkanWindow = nullptr;
+            delete m_vulkanInstance;
+            m_vulkanInstance = nullptr;
+            m_actOpenGL->setChecked(true);
+            QMessageBox::warning(this, "Vulkan不可用", "QVulkanWindow 初始化失败。");
+            return;
+        }
+        m_vulkanContainer = QWidget::createWindowContainer(m_vulkanWindow, m_viewContainer);
+        m_vulkanContainer->setFocusPolicy(Qt::StrongFocus);
+        m_viewLayout->addWidget(m_vulkanContainer, 1);
+        m_glContainer->hide();
+        m_debugWindow->hide();
+        m_vulkanBackend = true;
+    } else {
+        if (m_vulkanContainer) {
+            delete m_vulkanContainer;
+            m_vulkanContainer = nullptr;
+            m_vulkanWindow = nullptr;
+        }
+        if (m_vulkanInstance) {
+            delete m_vulkanInstance;
+            m_vulkanInstance = nullptr;
+        }
+        m_glContainer->show();
+        m_vulkanBackend = false;
+    }
+#else
+    Q_UNUSED(vulkan);
+#endif
+    updateBackendUi();
+}
+
+void MainWindow::updateBackendUi() {
+    const bool gl = !m_vulkanBackend;
+    if (m_backendLabel)
+        m_backendLabel->setText(gl ? "后端: OpenGL" : "后端: Vulkan");
+    if (m_backendButton)
+        m_backendButton->setText(gl ? "后端: OpenGL" : "后端: Vulkan");
+    if (m_actOpenGL) m_actOpenGL->setEnabled(!m_modelOpen);
+    if (m_actVulkan) m_actVulkan->setEnabled(!m_modelOpen &&
+#if defined(GL3D_HAS_VULKAN)
+        true
+#else
+        false
+#endif
+    );
+    if (m_actDebug) {
+        m_actDebug->setEnabled(gl);
+        if (!gl) m_actDebug->setChecked(false);
+    }
+    if (!gl && m_actDelete)
+        m_actDelete->setVisible(m_modelOpen);
+    if (m_debugWindow) m_debugWindow->setVisible(gl && m_actDebug && m_actDebug->isChecked());
+    for (QAction* action : {m_actProj, m_actWire, m_actUndo, m_actRedo, m_actMove, m_actRot, m_actScale})
+        if (action) action->setEnabled(gl);
+}
 
 // 操作器按钮互斥 选中新按钮时取消另两个勾选 再点当前按钮则取消
 void MainWindow::onTransformToggled(QAction* act, bool checked) {

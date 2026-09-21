@@ -3,6 +3,7 @@
 #include "shader.h"
 #include "meshrenderer.h"
 #include "meshloader.h"
+#include "renderframe.h"
 
 #include <QCoreApplication>
 #include <QMouseEvent>
@@ -41,8 +42,7 @@ signals:
     void finished(bool ok, const QString& err, const Mesh& mesh);
 };
 
-GLWidget::GLWidget(QWidget* parent) : QOpenGLWidget(parent) {
-    setFocusPolicy(Qt::StrongFocus); //接收键盘
+GLWidget::GLWidget(QWindow* parent) : QOpenGLWindow(QOpenGLWindow::NoPartialUpdate, parent) {
     m_fpsTimer.start();
     m_frameTimer.start();
     m_renderTimer = new QTimer(this);
@@ -121,6 +121,7 @@ void GLWidget::initializeGL() {
 void GLWidget::resizeGL(int w, int h) {
     auto& gl = GLFunctions::instance();
     gl.glViewport(0, 0, w, h);
+    m_dpr = devicePixelRatio();
     m_fbW = w;
     m_fbH = h;
     createPickTarget(w, h);
@@ -150,9 +151,9 @@ void GLWidget::paintGL() {
 
     if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; return; }
 
-    QMatrix4x4 view = m_camera.viewMatrix();
-    float aspect = height() > 0 ? (float)width() / height() : 1.0f;
-    QMatrix4x4 proj = m_camera.projMatrix(aspect);
+    const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()), m_modelMatrix);
+    const QMatrix4x4& view = frame.view;
+    const QMatrix4x4& proj = frame.projection;
 
     if (m_showGrid) drawGrid(proj, view); //背景网格 先画被模型遮挡
 
@@ -505,8 +506,12 @@ void GLWidget::pickAt(const QPoint& pos) {
     bool hit = false;
     makeCurrent(); //Qt6返回void 直接使上下文当前
     auto& gl = GLFunctions::instance();
-    int x = (int)(pos.x() * m_dpr);
-    int y = (int)(pos.y() * m_dpr);
+    // QOpenGLWindow 嵌入 QWidget 容器后，resizeGL 的单位可能是物理像素，
+    // 鼠标事件仍是逻辑像素，使用当前 FBO/窗口比例映射可以兼容两种情况。
+    const float scaleX = width() > 0 ? static_cast<float>(m_pickW) / width() : 1.0f;
+    const float scaleY = height() > 0 ? static_cast<float>(m_pickH) / height() : 1.0f;
+    const int x = qRound(pos.x() * scaleX);
+    const int y = qRound(pos.y() * scaleY);
     if (x >= 0 && y >= 0 && x < m_pickW && y < m_pickH) {
         gl.glBindFramebuffer(GL_FRAMEBUFFER, m_pickFbo);
         gl.glViewport(0, 0, m_pickW, m_pickH);
@@ -569,26 +574,7 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         update();
         return;
         }
-    m_mesh = mesh;
-    m_subMeshCenters.clear();
-    m_subMeshCenters.reserve(m_mesh.subMeshes.size());
-    for (const auto& subMesh : m_mesh.subMeshes) {
-        if (subMesh.vertices.empty()) {
-            m_subMeshCenters.push_back(m_mesh.center());
-            continue;
-        }
-        QVector3D minPos(subMesh.vertices.front().px, subMesh.vertices.front().py, subMesh.vertices.front().pz);
-        QVector3D maxPos = minPos;
-        for (const auto& vertex : subMesh.vertices) {
-            minPos.setX(std::min(minPos.x(), vertex.px));
-            minPos.setY(std::min(minPos.y(), vertex.py));
-            minPos.setZ(std::min(minPos.z(), vertex.pz));
-            maxPos.setX(std::max(maxPos.x(), vertex.px));
-            maxPos.setY(std::max(maxPos.y(), vertex.py));
-            maxPos.setZ(std::max(maxPos.z(), vertex.pz));
-        }
-        m_subMeshCenters.push_back((minPos + maxPos) * 0.5f);
-    }
+    m_scene.setMesh(mesh, m_currentPath);
     if (isValid()) { //context未就绪则留待initializeGL上传
         makeCurrent();
         m_renderer->upload(m_mesh);
@@ -615,6 +601,7 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
                    .arg(m_mesh.triangleCount())
                    .arg((int)m_mesh.subMeshes.size());
     emit modelLoaded(info);
+    // GPU 资源已经上传，CPU 侧只保留材质、纹理、包围盒和统计信息。
     m_mesh.releaseGeometry();
     emit loadFinished();
     update();
@@ -648,8 +635,7 @@ void GLWidget::deleteModel() {
     releaseOverlay(m_gridMesh);
     releaseOverlay(m_gizmoMesh);
     doneCurrent();
-    m_mesh = Mesh();
-    m_subMeshCenters.clear();
+    m_scene.clear();
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
@@ -1120,7 +1106,7 @@ void GLWidget::keyPressEvent(QKeyEvent* event) {
             resetView();
             return;
         default:
-            QOpenGLWidget::keyPressEvent(event);
+            QOpenGLWindow::keyPressEvent(event);
             return;
         }
     update();

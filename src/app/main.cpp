@@ -8,6 +8,11 @@
 #include <QCommandLineParser>
 #include <cstdio>
 
+#if defined(GL3D_HAS_VULKAN)
+#include <QVulkanInstance>
+#include "vulkanwindow.h"
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -48,6 +53,10 @@ int main(int argc, char* argv[]) {
     parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb → OpenGL渲染");
     parser.addHelpOption();
     parser.addVersionOption();
+#if defined(GL3D_HAS_VULKAN)
+    QCommandLineOption vulkanOpt("vulkan", "使用 QVulkanWindow 启动 Vulkan 渲染窗口");
+    parser.addOption(vulkanOpt);
+#endif
     QCommandLineOption infoOpt({"i", "info"}, "仅打印模型信息 不启动GUI");
     parser.addOption(infoOpt);
     parser.addPositionalArgument("model", "模型文件路径 stl/obj/glb");
@@ -61,6 +70,34 @@ int main(int argc, char* argv[]) {
             }
         return runInfo(args.first());
         }
+
+#if defined(GL3D_HAS_VULKAN)
+    if (parser.isSet(vulkanOpt)) {
+        QVulkanInstance instance;
+        instance.setLayers({"VK_LAYER_KHRONOS_validation"});
+        if (!instance.create()) {
+            fprintf(stderr, "[gl3d] Vulkan instance 创建失败\n");
+            return 2;
+        }
+
+        VulkanWindow window(&instance);
+        if (!window.isReady()) {
+            fprintf(stderr, "[gl3d] Vulkan instance 无效\n");
+            return 2;
+        }
+        window.resize(1100, 720);
+        window.setTitle("gl3d Vulkan");
+        if (!args.isEmpty()) {
+            QString error;
+            if (!window.loadModel(args.first(), &error)) {
+                fprintf(stderr, "[gl3d] Vulkan 模型加载失败: %s\n", qPrintable(error));
+                return 3;
+            }
+        }
+        window.show();
+        return app.exec();
+    }
+#endif
 
 #ifdef _WIN32
     app.setFont(QFont("Microsoft YaHei", 9));

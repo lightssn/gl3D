@@ -37,6 +37,8 @@ struct GL3D_EXPORT Mesh {
     std::vector<SubMesh> subMeshes;
     QVector3D bboxMin;
     QVector3D bboxMax;
+    int retainedVertexCount = 0;
+    int retainedTriangleCount = 0;
 
     //三角形总数 状态栏统计用
     int triangleCount() const;

@@ -7,9 +7,11 @@
 #include "renderoptions.h"
 #include "cameracontroller.h"
 #include "selectioncontroller.h"
+#include "renderscene.h"
+#include "renderview.h"
 #include "openglshader.h"
 #include "openglmeshrenderer.h"
-#include <QOpenGLWidget>
+#include <QOpenGLWindow>
 #include <QElapsedTimer>
 #include <QQuaternion>
 #include <QVector3D>
@@ -25,7 +27,7 @@ class ModelLoaderWorker; //后台解析线程的工作对象 定义在cpp
 
 //OpenGL渲染视口 负责context生命周期/渲染循环/键鼠交互
 //交互 左键旋转+点击选中 右键点击弹菜单+右键拖拽平移 滚轮缩放 WASD平移 R复位
-class GL3D_EXPORT GLWidget : public QOpenGLWidget {
+class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         Q_OBJECT
         //操作器模式 控制模型中央显示何种手柄
         enum TransformMode { None = 0, Translate = 1, Rotate = 2, Scale = 3 };
@@ -43,10 +45,11 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         std::unique_ptr<OpenGLShader> m_shader;
         std::unique_ptr<OpenGLShader> m_overlayShader;
         std::unique_ptr<OpenGLMeshRenderer> m_renderer;
-        Mesh m_mesh;                  //CPU侧网格 取景与统计用
-        CameraController m_cameraController;
+        RenderScene m_scene;
+        Mesh& m_mesh = m_scene.mesh();
+        CameraController& m_cameraController = m_scene.cameraController();
         Camera& m_camera = m_cameraController.camera();
-        SelectionController m_selectionController;
+        SelectionController& m_selectionController = m_scene.selection();
 
         OverlayMesh m_gridMesh;       //XY平面网格
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
@@ -101,7 +104,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         QElapsedTimer m_frameTimer;
         QTimer* m_renderTimer = nullptr;
         std::vector<float> m_frameTimesMs;
-        RenderOptions m_renderOptions;
+        RenderOptions& m_renderOptions = m_scene.options();
         bool& m_antialiasing = m_renderOptions.antialiasing;
         bool& m_showGrid = m_renderOptions.showGrid;
         bool& m_showGizmo = m_renderOptions.showGizmo;
@@ -159,7 +162,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void applyTransform(const TransformState& s);
 
     public:
-        explicit GLWidget(QWidget* parent = nullptr);
+        explicit GLWidget(QWindow* parent = nullptr);
         ~GLWidget() override;
 
         //加载模型文件 成功返回true并发出modelLoaded
@@ -199,6 +202,9 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         int selectedSubMesh() const { return m_selectedSubMesh; }
         void selectSubMesh(int index);
         DebugSnapshot debugSnapshot();
+        RenderBackend backend() const override { return RenderBackend::OpenGL; }
+        RenderScene& scene() override { return m_scene; }
+        const RenderScene& scene() const override { return m_scene; }
 
     signals:
         void fpsUpdated(int fps);
@@ -224,5 +230,5 @@ class GL3D_EXPORT GLWidget : public QOpenGLWidget {
         void mouseReleaseEvent(QMouseEvent* event) override;
         void wheelEvent(QWheelEvent* event) override;
         void keyPressEvent(QKeyEvent* event) override;
-        void contextMenuEvent(QContextMenuEvent* event) override;
+        void contextMenuEvent(QContextMenuEvent* event);
     };

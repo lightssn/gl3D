@@ -5,6 +5,10 @@ add_library(gl3d_core SHARED
     renderoptions.h
     cameracontroller.h
     selectioncontroller.h
+    renderscene.h
+    renderscene.cpp
+    renderview.h
+    renderframe.h
     openglshader.h
     openglmeshrenderer.h
     mesh.h
@@ -26,6 +30,8 @@ if(GL3D_HAS_VULKAN)
     target_sources(gl3d_core PRIVATE
         vulkanbackend.h
         vulkanbackend.cpp
+        vulkanwindow.h
+        vulkanwindow.cpp
     )
     target_compile_definitions(gl3d_core PUBLIC GL3D_HAS_VULKAN=1)
     target_link_libraries(gl3d_core PUBLIC Vulkan::Vulkan)
@@ -38,6 +44,7 @@ target_include_directories(gl3d_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(gl3d_core PUBLIC
     ${GL3D_QT_WIDGETS_TARGET}
+    ${GL3D_QT_GUI_TARGET}
     ${GL3D_QT_OPENGL_TARGET}
     ${GL3D_QT_OPENGL_WIDGETS_TARGET}
 )
