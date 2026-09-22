@@ -483,13 +483,22 @@ void GLWidget::createPickTarget(int w, int h) {
 //左键拾取 模型渲染为纯红 读取点击处像素判断命中
 //鼠标事件中GL上下文非当前 须makeCurrent后再操作
 void GLWidget::pickAt(const QPoint& pos) {
-    if (!hasModel() || !m_pickFbo || !isValid()) {
+    if (!hasModel() || !isValid()) {
         update();
         return;
         }
     bool hit = false;
     makeCurrent(); //Qt6返回void 直接使上下文当前
     auto& gl = GLFunctions::instance();
+    // 侧栏布局变化后拾取目标可能为空或尺寸过期，点击时按实际视口重建。
+    const int targetW = std::max(qRound(width() * devicePixelRatioF()), 1);
+    const int targetH = std::max(qRound(height() * devicePixelRatioF()), 1);
+    if (!m_pickFbo || m_pickW != targetW || m_pickH != targetH)
+        createPickTarget(targetW, targetH);
+    if (!m_pickFbo) {
+        doneCurrent();
+        return;
+    }
     // QOpenGLWindow 嵌入 QWidget 容器后，resizeGL 的单位可能是物理像素，
     // 鼠标事件仍是逻辑像素，使用当前 FBO/窗口比例映射可以兼容两种情况。
     const float scaleX = width() > 0 ? static_cast<float>(m_pickW) / width() : 1.0f;

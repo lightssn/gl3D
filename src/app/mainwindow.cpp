@@ -358,7 +358,7 @@ void MainWindow::setBackend(bool vulkan) {
             m_actMove->setVisible(selected);
             m_actRot->setVisible(selected);
             m_actScale->setVisible(selected);
-            m_actDelete->setVisible(selected || m_modelOpen);
+            m_actDelete->setVisible(selected);
             if (!selected && m_curTransform) m_curTransform->setChecked(false);
         });
         connect(m_vulkanWindow, &VulkanWindow::contextMenuRequested, this, [this](const QPoint& position) {
@@ -412,7 +412,9 @@ void MainWindow::updateBackendUi() {
     if (m_actDebug) m_actDebug->setEnabled(true);
 #if defined(GL3D_HAS_VULKAN)
     if (!gl && m_actDelete)
-        m_actDelete->setVisible(m_modelOpen && m_vulkanWindow && !m_vulkanWindow->isLoading());
+        m_actDelete->setVisible(m_modelOpen && m_vulkanWindow &&
+                               !m_vulkanWindow->isLoading() &&
+                               m_vulkanWindow->selectedSubMesh() >= 0);
 #endif
     if (m_debugWindow) m_debugWindow->setVisible(m_actDebug && m_actDebug->isChecked());
     for (QAction* action : {m_actProj, m_actWire, m_actUndo, m_actRedo, m_actMove, m_actRot, m_actScale})
