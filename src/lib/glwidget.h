@@ -9,8 +9,6 @@
 #include "selectioncontroller.h"
 #include "renderscene.h"
 #include "renderview.h"
-#include "openglshader.h"
-#include "openglmeshrenderer.h"
 #include <QOpenGLWindow>
 #include <QElapsedTimer>
 #include <QQuaternion>
@@ -42,22 +40,18 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
             int count = 0; //顶点数 以2为单位绘制GL_LINES
         };
 
-        std::unique_ptr<OpenGLShader> m_shader;
-        std::unique_ptr<OpenGLShader> m_overlayShader;
-        std::unique_ptr<OpenGLMeshRenderer> m_renderer;
+        std::unique_ptr<Shader> m_shader;
+        std::unique_ptr<Shader> m_overlayShader;
+        std::unique_ptr<MeshRenderer> m_renderer;
         RenderScene m_scene;
         Mesh& m_mesh = m_scene.mesh();
-        CameraController& m_cameraController = m_scene.cameraController();
-        Camera& m_camera = m_cameraController.camera();
-        SelectionController& m_selectionController = m_scene.selection();
+        Camera& m_camera = m_scene.cameraController().camera();
 
         OverlayMesh m_gridMesh;       //XY平面网格
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
         OverlayMesh m_gizmoMesh;      //模型中央操作器
         TransformMode m_transformMode = None;
-        int& m_selectedSubMesh = m_selectionController.indexRef();
-        bool m_wireframe = false;     //线框模式 打开后可见三角面带浅灰边
-        float m_outlineWidth = 0.01f; //选中描边沿法线挤出量
+        int& m_selectedSubMesh = m_scene.selection().indexRef();
 
         //模型变换 T(c+pos)*R*S*T(-c) 绕模型中心旋转缩放 三模式共享
         QVector3D m_transformPos{0, 0, 0};
@@ -76,7 +70,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         std::vector<TransformState> m_undoStack;
         std::vector<TransformState> m_redoStack;
         TransformState m_dragStartState; //当前拖拽起点 松开时对比是否变化
-        std::vector<QVector3D>& m_subMeshCenters = m_selectionController.centers();
+        std::vector<QVector3D>& m_subMeshCenters = m_scene.selection().centers();
 
         //后台加载 解析在worker线程 解析完主线程上传显存
         QThread* m_loadThread = nullptr;
@@ -105,6 +99,8 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         QTimer* m_renderTimer = nullptr;
         std::vector<float> m_frameTimesMs;
         RenderOptions& m_renderOptions = m_scene.options();
+        bool& m_wireframe = m_renderOptions.wireframe;
+        float& m_outlineWidth = m_renderOptions.outlineWidth;
         bool& m_antialiasing = m_renderOptions.antialiasing;
         bool& m_showGrid = m_renderOptions.showGrid;
         bool& m_showGizmo = m_renderOptions.showGizmo;

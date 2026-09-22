@@ -10,7 +10,6 @@
 #include <QFile>
 #include <QImage>
 #include <QVector>
-#include <QVector4D>
 #include <QScreen>
 #include <QDebug>
 #include <QFileInfo>
@@ -405,18 +404,8 @@ public:
         }
         if (m_window->scene().hasModel() && m_window->scene().options().showAxes &&
             overlayPipeline && m_overlayBuffer) {
-            QMatrix4x4 viewRotation = frame.view;
-            viewRotation.setColumn(3, QVector4D(0, 0, 0, 1));
-            QMatrix4x4 orthographic;
-            orthographic.ortho(-1, 1, -1, 1, -100, 100);
-            QMatrix4x4 corner;
-            corner.translate(-0.8f, -0.8f);
-            // NDC 的 X/Y 每单位对应的像素数不同，补偿宽高比后箭头保持正方形比例。
-            const float aspect = size.height() > 0
-                ? float(size.width()) / float(size.height()) : 1.0f;
-            corner.scale(0.2f / aspect, 0.2f);
-            const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() * corner *
-                                    orthographic * viewRotation;
+            const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() *
+                                    makeAxesHudMatrix(frame.view, size);
             m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline);
             m_df->vkCmdBindVertexBuffers(cmd, 0, 1, &m_overlayBuffer, &offset);
             m_df->vkCmdPushConstants(cmd, m_overlayPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,

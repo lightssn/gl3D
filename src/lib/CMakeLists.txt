@@ -9,8 +9,6 @@ add_library(gl3d_core SHARED
     renderscene.cpp
     renderview.h
     renderframe.h
-    openglshader.h
-    openglmeshrenderer.h
     mesh.h
     mesh.cpp
     meshloader.h
@@ -28,8 +26,6 @@ add_library(gl3d_core SHARED
 
 if(GL3D_HAS_VULKAN)
     target_sources(gl3d_core PRIVATE
-        vulkanbackend.h
-        vulkanbackend.cpp
         vulkanwindow.h
         vulkanwindow.cpp
         vulkanwindow_input.cpp

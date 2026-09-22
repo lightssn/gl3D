@@ -135,7 +135,7 @@ void GLWidget::paintGL() {
 
     if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; return; }
 
-    const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()), m_modelMatrix);
+    const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()));
     const QMatrix4x4& view = frame.view;
     const QMatrix4x4& proj = frame.projection;
 
@@ -443,18 +443,7 @@ void GLWidget::drawGizmo(const QMatrix4x4& proj, const QMatrix4x4& view) {
 
 //坐标轴HUD 取视图旋转(去掉平移) 经缩放位移固定到左下角
 void GLWidget::drawAxesHud(const QMatrix4x4& view) {
-    QMatrix4x4 viewRot = view;
-    viewRot.setColumn(3, QVector4D(0, 0, 0, 1)); //只留旋转 轴随视角转动
-    QMatrix4x4 mvp;
-    mvp.ortho(-1, 1, -1, 1, -100, 100); //单位盒子映射全屏
-    mvp = mvp * viewRot;
-    QMatrix4x4 corner; //缩放到左下角 中心约NDC(-0.8,-0.8)
-    corner.translate(-0.8f, -0.8f, 0.0f);
-    // NDC 的 X/Y 每单位对应的像素数不同，补偿宽高比后箭头保持正方形比例。
-    const float aspect = m_fbH > 0 ? static_cast<float>(m_fbW) / m_fbH : 1.0f;
-    corner.scale(0.2f / aspect, 0.2f);
-    mvp = corner * mvp;
-    drawOverlay(m_axesMesh, mvp, true, QVector3D());
+    drawOverlay(m_axesMesh, makeAxesHudMatrix(view, QSize(m_fbW, m_fbH)), true, QVector3D());
     }
 
 //离屏拾取目标 与视口同尺寸 颜色+深度附件
@@ -578,7 +567,6 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         }
     m_camera.fitToSphere(m_mesh.center(), m_mesh.radius());
     m_outlineWidth = m_mesh.radius() * 0.02f;
-    m_renderOptions.outlineWidth = m_outlineWidth;
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
@@ -664,13 +652,11 @@ void GLWidget::setTransformMode(int mode) {
 
 void GLWidget::setWireframe(bool on) {
     m_wireframe = on;
-    m_renderOptions.wireframe = on;
     update();
     }
 
 void GLWidget::setOutlineWidth(float width) {
     m_outlineWidth = std::max(0.0f, width);
-    m_renderOptions.outlineWidth = m_outlineWidth;
     update();
     }
 
