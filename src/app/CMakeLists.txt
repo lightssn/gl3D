@@ -65,6 +65,11 @@ endif()
 
 # windeployqt自动拷贝Qt运行时dll与插件。windeployqt需要调用同版本qmake。
 find_program(WINDEPLOYQT windeployqt HINTS "${CMAKE_PREFIX_PATH}/bin")
+if(WINDEPLOYQT AND NOT EXISTS "${WINDEPLOYQT}")
+    message(WARNING "Configured windeployqt does not exist; Qt runtime deployment is skipped")
+    unset(WINDEPLOYQT CACHE)
+    set(WINDEPLOYQT "")
+endif()
 if(WINDEPLOYQT)
     get_filename_component(WINDEPLOYQT_BIN_DIR "${WINDEPLOYQT}" DIRECTORY)
     # Qt6通常与windeployqt同目录；vcpkg Qt5可能需要从tools/qt5/bin回退查找。

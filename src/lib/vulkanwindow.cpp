@@ -1418,7 +1418,7 @@ VulkanWindow::VulkanWindow(QVulkanInstance* instance, QWindow* parent) : QVulkan
     setVulkanInstance(instance);
     m_ready = instance && instance->isValid();
     if (m_ready) {
-        const QList<int> counts = supportedSampleCounts();
+        const auto counts = supportedSampleCounts();
         const int samples = counts.contains(4) ? 4 : counts.contains(2) ? 2 : 1;
         m_multisamplingAvailable = samples > 1;
         m_scene.options().antialiasing = m_multisamplingAvailable;
