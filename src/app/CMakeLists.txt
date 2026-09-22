@@ -39,13 +39,25 @@ if(GL3D_HAS_VULKAN)
             "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/shaderc"
             "$ENV{VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}/tools/shaderc")
     if(GLSLC_EXECUTABLE)
-        foreach(vulkan_shader vulkan_model.vert vulkan_model.frag)
-            add_custom_command(TARGET gl3d POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gl3d>/shaders
+        set(vulkan_shader_outputs)
+        foreach(vulkan_shader vulkan_model.vert vulkan_model.frag vulkan_overlay.vert vulkan_overlay.frag vulkan_pick.frag)
+            set(shader_output "${CMAKE_CURRENT_BINARY_DIR}/vulkan_shaders/${vulkan_shader}.spv")
+            add_custom_command(OUTPUT "${shader_output}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/vulkan_shaders"
                 COMMAND ${GLSLC_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/shaders/${vulkan_shader}
-                    -o $<TARGET_FILE_DIR:gl3d>/shaders/${vulkan_shader}.spv)
+                    -o "${shader_output}"
+                DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../lib/shaders/${vulkan_shader}
+                VERBATIM)
+            list(APPEND vulkan_shader_outputs "${shader_output}")
         endforeach()
+        add_custom_target(gl3d_vulkan_shaders
+            COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gl3d>/shaders
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${vulkan_shader_outputs} $<TARGET_FILE_DIR:gl3d>/shaders
+            DEPENDS ${vulkan_shader_outputs}
+            VERBATIM)
+        add_dependencies(gl3d gl3d_vulkan_shaders)
     else()
         message(WARNING "glslc not found; Vulkan model shaders will not be built")
     endif()

@@ -32,6 +32,7 @@ if(GL3D_HAS_VULKAN)
         vulkanbackend.cpp
         vulkanwindow.h
         vulkanwindow.cpp
+        vulkanwindow_input.cpp
     )
     target_compile_definitions(gl3d_core PUBLIC GL3D_HAS_VULKAN=1)
     target_link_libraries(gl3d_core PUBLIC Vulkan::Vulkan)
