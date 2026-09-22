@@ -411,7 +411,10 @@ public:
             orthographic.ortho(-1, 1, -1, 1, -100, 100);
             QMatrix4x4 corner;
             corner.translate(-0.8f, -0.8f);
-            corner.scale(0.2f);
+            // NDC 的 X/Y 每单位对应的像素数不同，补偿宽高比后箭头保持正方形比例。
+            const float aspect = size.height() > 0
+                ? float(size.width()) / float(size.height()) : 1.0f;
+            corner.scale(0.2f / aspect, 0.2f);
             const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() * corner *
                                     orthographic * viewRotation;
             m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline);

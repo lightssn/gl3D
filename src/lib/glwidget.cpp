@@ -450,7 +450,9 @@ void GLWidget::drawAxesHud(const QMatrix4x4& view) {
     mvp = mvp * viewRot;
     QMatrix4x4 corner; //缩放到左下角 中心约NDC(-0.8,-0.8)
     corner.translate(-0.8f, -0.8f, 0.0f);
-    corner.scale(0.2f);
+    // NDC 的 X/Y 每单位对应的像素数不同，补偿宽高比后箭头保持正方形比例。
+    const float aspect = m_fbH > 0 ? static_cast<float>(m_fbW) / m_fbH : 1.0f;
+    corner.scale(0.2f / aspect, 0.2f);
     mvp = corner * mvp;
     drawOverlay(m_axesMesh, mvp, true, QVector3D());
     }
