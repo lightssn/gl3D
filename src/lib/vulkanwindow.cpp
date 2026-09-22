@@ -239,6 +239,12 @@ public:
     void startNextFrame() override
     {
         createModelBuffers();
+        if (m_uniformImageCount && m_uniformImageCount != m_window->swapChainImageCount()) {
+            m_df->vkDeviceWaitIdle(m_device);
+            destroyModelDescriptors();
+            if (!createModelDescriptors()) qWarning() << "Vulkan descriptors could not be resized for swapchain";
+            updateResourceStats();
+        }
         if (m_uploadedGridRevision != m_window->gridRevision()) rebuildGrid();
         if (m_pipelineRevision != m_window->pipelineRevision()) {
             m_df->vkDeviceWaitIdle(m_device);
@@ -301,7 +307,8 @@ public:
         }
         if (modelPipeline && m_indexBuffer && m_uniformBuffer && m_window->scene().hasModel()) {
             const RenderOptions& options = m_window->scene().options();
-            const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() * m_window->currentFrame();
+            // Qt 已等待当前交换链图像的上一次绘制结束，按图像隔离 UBO 可避免帧间改写。
+            const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() * imageIndex;
             void* mapped = nullptr;
             if (m_df->vkMapMemory(m_device, m_uniformMemory, 0, m_uniformAllocation, 0, &mapped) == VK_SUCCESS) {
                 for (int index = 0; index < m_ranges.size(); ++index) {
@@ -543,6 +550,7 @@ private:
         destroyBuffer(m_uniformBuffer, m_uniformMemory);
         m_descriptorPool = VK_NULL_HANDLE;
         m_uniformAllocation = 0;
+        m_uniformImageCount = 0;
         for (DrawRange& range : m_ranges) range.descriptor = VK_NULL_HANDLE;
     }
 
@@ -675,7 +683,9 @@ private:
     {
         if (m_ranges.isEmpty() || !m_descriptorLayout) return false;
         const uint32_t count = uint32_t(m_ranges.size());
-        const VkDeviceSize bytes = m_uniformStride * count * QVulkanWindow::MAX_CONCURRENT_FRAME_COUNT;
+        const int imageCount = m_window->swapChainImageCount();
+        if (imageCount <= 0) return false;
+        const VkDeviceSize bytes = m_uniformStride * count * imageCount;
         if (!createBuffer(bytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr,
                           m_uniformBuffer, m_uniformMemory, &m_uniformAllocation)) return false;
         VkDescriptorPoolSize sizes[2]{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, count},
@@ -709,6 +719,7 @@ private:
             }
             m_df->vkUpdateDescriptorSets(m_device, 4, writes, 0, nullptr);
         }
+        m_uniformImageCount = imageCount;
         return true;
     }
 
@@ -977,7 +988,8 @@ private:
         pickMatrix(0, 3) = float(size.width() - 2 * x - 1);
         pickMatrix(1, 3) = float(size.height() - 2 * y - 1);
         const RenderFrame frame = makeRenderFrame(m_window->scene(), size);
-        const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() * m_window->currentFrame();
+        const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() *
+                                          m_window->currentSwapChainImageIndex();
         m_df->vkDeviceWaitIdle(m_device); // 拾取时才等待，避免覆盖尚在使用的动态 UBO。
         void* mapped = nullptr;
         if (m_df->vkMapMemory(m_device, m_uniformMemory, 0, m_uniformAllocation, 0, &mapped) != VK_SUCCESS)
@@ -1157,6 +1169,11 @@ private:
         if (!uploaded) qWarning() << "One or more Vulkan textures could not be uploaded";
         if (!createModelDescriptors()) qWarning() << "Vulkan model descriptors unavailable";
         m_uploadedTextureRevision = m_window->textureRevision();
+        updateResourceStats();
+    }
+
+    void updateResourceStats()
+    {
         qint64 gpu = m_whiteTexture.allocationSize, cpu = 0;
         int count = m_whiteTexture.view ? 1 : 0;
         for (const DrawRange& range : m_ranges)
@@ -1392,6 +1409,7 @@ private:
     VkDeviceMemory m_uniformMemory = VK_NULL_HANDLE;
     VkDeviceSize m_uniformStride = 0, m_vertexAllocation = 0, m_indexAllocation = 0;
     VkDeviceSize m_uniformAllocation = 0;
+    int m_uniformImageCount = 0;
     TextureResource m_whiteTexture;
     uint64_t m_uploadedTextureRevision = 0;
     QVector<DrawRange> m_ranges;
