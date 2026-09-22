@@ -14,6 +14,8 @@
 #include <vector>
 
 class QVulkanInstance;
+class QThread;
+class ModelLoaderWorker;
 
 // Qt 管理 Vulkan surface、swapchain 和同步对象，渲染器负责录制绘制命令。
 class GL3D_EXPORT VulkanWindow final : public QVulkanWindow, public RenderView {
@@ -25,6 +27,9 @@ public:
 
     bool isReady() const { return m_ready; }
     bool loadModel(const QString& path, QString* error = nullptr);
+    bool loadModelAsync(const QString& path);
+    bool isLoading() const { return m_loading; }
+    void modelUploadFinished();
     void clearModel();
     void resetView();
     void setOrtho(bool enabled);
@@ -69,6 +74,7 @@ public:
     uint64_t modelRevision() const { return m_modelRevision; }
     uint64_t textureRevision() const { return m_textureRevision; }
     uint64_t pipelineRevision() const { return m_pipelineRevision; }
+    uint64_t gridRevision() const { return m_gridRevision; }
     bool mipmapsEnabled() const { return m_mipmaps; }
     bool multisamplingAvailable() const { return m_multisamplingAvailable; }
     const RenderScene& scene() const { return m_scene; }
@@ -76,6 +82,11 @@ public:
     RenderBackend backend() const override { return RenderBackend::Vulkan; }
 
 signals:
+    void modelLoaded(const QString& info);
+    void loadFailed(const QString& error);
+    void loadStarted();
+    void progressChanged(int percent);
+    void loadFinished();
     void fpsUpdated(int fps);
     void selectionChanged(bool selected);
     void subMeshSelected(int index);
@@ -92,10 +103,15 @@ protected:
 
 private:
     bool m_ready = false;
+    bool m_loading = false;
+    QThread* m_loadThread = nullptr;
+    ModelLoaderWorker* m_loadWorker = nullptr;
+    QString m_currentPath;
     RenderScene m_scene;
     uint64_t m_modelRevision = 0;
     uint64_t m_textureRevision = 0;
     uint64_t m_pipelineRevision = 0;
+    uint64_t m_gridRevision = 0;
     bool m_mipmaps = false;
     bool m_multisamplingAvailable = false;
     struct Bounds { QVector3D min, max; };
@@ -127,6 +143,7 @@ private:
     float m_clearColor[3] = {0.13f, 0.13f, 0.16f};
     int hitGizmo(const QPoint& pos) const;
     QVector3D gizmoAxis(int index) const;
+    void setLoadedMesh(Mesh mesh, const QString& path);
 };
 
 #endif

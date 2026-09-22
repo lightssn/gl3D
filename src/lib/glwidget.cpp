@@ -26,22 +26,6 @@ static const float kPi = 3.14159265f;
 //model.glsl 模型Blinn-Phong头灯 uFlatColor=1纯色(描边/蒙版/拾取) uOutline>0沿法线挤出
 //overlay.glsl 线段 网格/坐标轴/操作器共用
 
-//后台模型解析工作对象 常驻加载线程 MeshLoader::load阻塞解析 进度经信号回主线程
-//解析(CPU)与渲染上传(需GL context)分离 界面不卡顿
-class ModelLoaderWorker : public QObject {
-    Q_OBJECT
-public slots:
-    void load(const QString& path) {
-        Mesh mesh;
-        QString err;
-        const bool ok = MeshLoader::load(path, mesh, &err, [this](int p) { emit progress(p); });
-        emit finished(ok, err, mesh);
-        }
-signals:
-    void progress(int percent);            //0~100
-    void finished(bool ok, const QString& err, const Mesh& mesh);
-};
-
 GLWidget::GLWidget(QWindow* parent) : QOpenGLWindow(QOpenGLWindow::NoPartialUpdate, parent) {
     m_fpsTimer.start();
     m_frameTimer.start();
@@ -1176,5 +1160,3 @@ void GLWidget::pushAxisArrow(std::vector<OverlayVertex>& out, QVector3D axis,
     pushLine(out, QVector3D(), coneBase, color);
     pushCone(out, coneBase, d, len * 0.28f, len * 0.055f, color);
     }
-
-#include "glwidget.moc" //AUTOMOC: cpp内Q_OBJECT的ModelLoaderWorker元信息

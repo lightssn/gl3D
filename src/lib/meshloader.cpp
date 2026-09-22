@@ -44,6 +44,13 @@ bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
     return true;
     }
 
+void ModelLoaderWorker::load(const QString& path) {
+    Mesh mesh;
+    QString error;
+    const bool ok = MeshLoader::load(path, mesh, &error, [this](int percent) { emit progress(percent); });
+    emit finished(ok, error, mesh);
+}
+
 //mtl材质参数
 struct MtlInfo {
     QVector3D kd{0.7f, 0.7f, 0.7f};

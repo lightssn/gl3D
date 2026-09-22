@@ -3,6 +3,7 @@
 #if defined(GL3D_HAS_VULKAN)
 
 #include "renderframe.h"
+#include "meshloader.h"
 #include <QVulkanDeviceFunctions>
 #include <QVulkanInstance>
 #include <QCoreApplication>
@@ -12,6 +13,9 @@
 #include <QVector4D>
 #include <QScreen>
 #include <QDebug>
+#include <QFileInfo>
+#include <QMetaObject>
+#include <QThread>
 #include <cstring>
 #include <algorithm>
 #include <cfloat>
@@ -124,17 +128,38 @@ public:
         m_window->vulkanInstance()->functions()->vkGetPhysicalDeviceFeatures(m_window->physicalDevice(), &features);
         m_wireframeSupported = features.fillModeNonSolid == VK_TRUE;
         std::vector<OverlayVertex> lines;
+        // 与 OpenGL 的坐标轴 HUD 保持相同：轴杆 + 8 段线框锥体箭头。
         const QVector3D axes[3]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-        const QVector3D colors[3]{{1.0f, 0.25f, 0.25f}, {0.3f, 1.0f, 0.35f}, {0.3f, 0.55f, 1.0f}};
+        const QVector3D colors[3]{{0.95f, 0.25f, 0.25f}, {0.25f, 0.95f, 0.25f}, {0.3f, 0.5f, 1.0f}};
         auto line = [&lines](const QVector3D& a, const QVector3D& b, const QVector3D& color) {
             lines.push_back({{a.x(), a.y(), a.z()}, {color.x(), color.y(), color.z()}});
             lines.push_back({{b.x(), b.y(), b.z()}, {color.x(), color.y(), color.z()}});
         };
+        auto cone = [&line](const QVector3D& base, const QVector3D& axis,
+                            float length, float radius, const QVector3D& color) {
+            const QVector3D d = axis.normalized();
+            const QVector3D tip = base + d * length;
+            const QVector3D up = std::fabs(d.y()) > 0.99f
+                ? QVector3D(1, 0, 0) : QVector3D(0, 1, 0);
+            const QVector3D right = QVector3D::crossProduct(d, up).normalized();
+            const QVector3D bitangent = QVector3D::crossProduct(d, right);
+            constexpr int segments = 8;
+            constexpr float pi = 3.14159265358979323846f;
+            for (int i = 0; i < segments; ++i) {
+                const float a0 = float(i) * 2.0f * pi / float(segments);
+                const float a1 = float(i + 1) * 2.0f * pi / float(segments);
+                const QVector3D p0 = base + right * (std::cos(a0) * radius)
+                                           + bitangent * (std::sin(a0) * radius);
+                const QVector3D p1 = base + right * (std::cos(a1) * radius)
+                                           + bitangent * (std::sin(a1) * radius);
+                line(p0, tip, color);
+                line(p0, p1, color);
+            }
+        };
         for (int i = 0; i < 3; ++i) {
-            line(QVector3D(), axes[i], colors[i]);
-            const QVector3D side = axes[(i + 1) % 3] * 0.08f;
-            line(axes[i], axes[i] * 0.82f + side, colors[i]);
-            line(axes[i], axes[i] * 0.82f - side, colors[i]);
+            const QVector3D base = axes[i] * 0.72f;
+            line(QVector3D(), base, colors[i]);
+            cone(base, axes[i], 0.28f, 0.055f, colors[i]);
         }
         m_arrowVertexCount = uint32_t(lines.size());
         for (int i = 0; i < 3; ++i) {
@@ -172,6 +197,8 @@ public:
         if (m_pick.pass) createPipeline(false, true);
         createOverlayPipeline();
         if (m_singleSamplePass) createOverlayPipeline(true);
+        createOverlayPipeline(false, true);
+        if (m_singleSamplePass) createOverlayPipeline(true, true);
         m_pipelineRevision = m_window->pipelineRevision();
     }
 
@@ -196,6 +223,7 @@ public:
         destroyBuffer(m_vertexBuffer, m_vertexMemory);
         destroyBuffer(m_indexBuffer, m_indexMemory);
         destroyBuffer(m_overlayBuffer, m_overlayMemory);
+        destroyBuffer(m_gridBuffer, m_gridMemory);
         destroyModelDescriptors();
         destroyTextures();
         destroyTexture(m_whiteTexture);
@@ -211,6 +239,7 @@ public:
     void startNextFrame() override
     {
         createModelBuffers();
+        if (m_uploadedGridRevision != m_window->gridRevision()) rebuildGrid();
         if (m_pipelineRevision != m_window->pipelineRevision()) {
             m_df->vkDeviceWaitIdle(m_device);
             destroyPipeline();
@@ -219,6 +248,8 @@ public:
             if (m_pick.pass) createPipeline(false, true);
             createOverlayPipeline();
             if (m_singleSamplePass) createOverlayPipeline(true);
+            createOverlayPipeline(false, true);
+            if (m_singleSamplePass) createOverlayPipeline(true, true);
             m_pipelineRevision = m_window->pipelineRevision();
         }
         if (m_window->scene().hasModel() && m_uploadedTextureRevision != m_window->textureRevision())
@@ -238,6 +269,7 @@ public:
         VkPipeline outlinePipeline = singleSample ? m_singleSampleOutlinePipeline : m_outlinePipeline;
         VkPipeline selectionPipeline = singleSample ? m_singleSampleSelectionPipeline : m_selectionPipeline;
         VkPipeline overlayPipeline = singleSample ? m_singleSampleOverlayPipeline : m_overlayPipeline;
+        VkPipeline gridPipeline = singleSample ? m_singleSampleGridPipeline : m_gridPipeline;
         VkClearValue clearValues[3]{};
         const float* background = m_window->clearColor();
         clearValues[0].color = {{background[0], background[1], background[2], 1.0f}};
@@ -252,8 +284,22 @@ public:
         pass.pClearValues = clearValues;
         m_df->vkCmdBeginRenderPass(cmd, &pass, VK_SUBPASS_CONTENTS_INLINE);
         int drawCalls = 0;
+        const RenderFrame frame = makeRenderFrame(m_window->scene(), size);
+        VkViewport viewport{0.0f, 0.0f, float(size.width()), float(size.height()), 0.0f, 1.0f};
+        VkRect2D scissor{{0, 0}, {uint32_t(size.width()), uint32_t(size.height())}};
+        const VkDeviceSize offset = 0;
+        m_df->vkCmdSetViewport(cmd, 0, 1, &viewport);
+        m_df->vkCmdSetScissor(cmd, 0, 1, &scissor);
+        if (m_window->scene().options().showGrid && gridPipeline && m_gridBuffer && m_gridVertexCount) {
+            const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() * frame.projection * frame.view;
+            m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline);
+            m_df->vkCmdBindVertexBuffers(cmd, 0, 1, &m_gridBuffer, &offset);
+            m_df->vkCmdPushConstants(cmd, m_overlayPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                                     0, 64, mvp.constData());
+            m_df->vkCmdDraw(cmd, m_gridVertexCount, 1, 0, 0);
+            ++drawCalls;
+        }
         if (modelPipeline && m_indexBuffer && m_uniformBuffer && m_window->scene().hasModel()) {
-            const RenderFrame frame = makeRenderFrame(m_window->scene(), size);
             const RenderOptions& options = m_window->scene().options();
             const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() * m_window->currentFrame();
             void* mapped = nullptr;
@@ -281,11 +327,6 @@ public:
             } else {
                 qWarning() << "Vulkan uniform buffer mapping failed";
             }
-            VkViewport viewport{0.0f, 0.0f, float(size.width()), float(size.height()), 0.0f, 1.0f};
-            VkRect2D scissor{{0, 0}, {uint32_t(size.width()), uint32_t(size.height())}};
-            const VkDeviceSize offset = 0;
-            m_df->vkCmdSetViewport(cmd, 0, 1, &viewport);
-            m_df->vkCmdSetScissor(cmd, 0, 1, &scissor);
             m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, modelPipeline);
             m_df->vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertexBuffer, &offset);
             m_df->vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -355,6 +396,24 @@ public:
                        << "indices=" << m_uploadedIndexCount;
             m_reportedDrawFailure = true;
         }
+        if (m_window->scene().hasModel() && m_window->scene().options().showAxes &&
+            overlayPipeline && m_overlayBuffer) {
+            QMatrix4x4 viewRotation = frame.view;
+            viewRotation.setColumn(3, QVector4D(0, 0, 0, 1));
+            QMatrix4x4 orthographic;
+            orthographic.ortho(-1, 1, -1, 1, -100, 100);
+            QMatrix4x4 corner;
+            corner.translate(-0.8f, -0.8f);
+            corner.scale(0.2f);
+            const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() * corner *
+                                    orthographic * viewRotation;
+            m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline);
+            m_df->vkCmdBindVertexBuffers(cmd, 0, 1, &m_overlayBuffer, &offset);
+            m_df->vkCmdPushConstants(cmd, m_overlayPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                                     0, 64, mvp.constData());
+            m_df->vkCmdDraw(cmd, m_arrowVertexCount, 1, 0, 0);
+            ++drawCalls;
+        }
         m_df->vkCmdEndRenderPass(cmd);
         m_window->recordFrame(drawCalls);
         m_window->frameReady();
@@ -420,6 +479,40 @@ private:
             m_df->vkUnmapMemory(m_device, memory);
         }
         return true;
+    }
+
+    void rebuildGrid()
+    {
+        m_df->vkDeviceWaitIdle(m_device);
+        destroyBuffer(m_gridBuffer, m_gridMemory);
+        m_gridVertexCount = 0;
+        m_gridAllocation = 0;
+        const Mesh& mesh = m_window->scene().mesh();
+        const float radius = mesh.radius();
+        if (m_window->scene().hasModel() && radius > 0.0f) {
+            std::vector<OverlayVertex> vertices;
+            const float* clear = m_window->clearColor();
+            const float luminance = (clear[0] + clear[1] + clear[2]) / 3.0f;
+            const QVector3D base = luminance > 0.5f
+                ? QVector3D(0.45f, 0.45f, 0.5f) : QVector3D(0.32f, 0.32f, 0.38f);
+            auto line = [&vertices](const QVector3D& a, const QVector3D& b, const QVector3D& color) {
+                vertices.push_back({{a.x(), a.y(), a.z()}, {color.x(), color.y(), color.z()}});
+                vertices.push_back({{b.x(), b.y(), b.z()}, {color.x(), color.y(), color.z()}});
+            };
+            const float extent = radius * 1.5f;
+            const float z = -extent * 0.001f;
+            for (int i = 0; i <= 8; ++i) {
+                const float p = -extent + i * extent * 0.25f;
+                line({-extent, p, z}, {extent, p, z}, base);
+                line({p, -extent, z}, {p, extent, z}, base);
+            }
+            line({-extent, 0, z}, {extent, 0, z}, base * 1.7f);
+            line({0, -extent, z}, {0, extent, z}, base * 1.7f);
+            if (createBuffer(vertices.size() * sizeof(OverlayVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             vertices.data(), m_gridBuffer, m_gridMemory, &m_gridAllocation))
+                m_gridVertexCount = uint32_t(vertices.size());
+        }
+        m_uploadedGridRevision = m_window->gridRevision();
     }
 
     void destroyTexture(TextureResource& texture)
@@ -882,7 +975,7 @@ private:
         pickMatrix(0, 0) = float(size.width());
         pickMatrix(1, 1) = float(size.height());
         pickMatrix(0, 3) = float(size.width() - 2 * x - 1);
-        pickMatrix(1, 3) = float(2 * y + 1 - size.height());
+        pickMatrix(1, 3) = float(size.height() - 2 * y - 1);
         const RenderFrame frame = makeRenderFrame(m_window->scene(), size);
         const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() * m_window->currentFrame();
         m_df->vkDeviceWaitIdle(m_device); // 拾取时才等待，避免覆盖尚在使用的动态 UBO。
@@ -986,17 +1079,22 @@ private:
         m_whiteTexture.source = QImage();
         destroyBuffer(m_vertexBuffer, m_vertexMemory);
         destroyBuffer(m_indexBuffer, m_indexMemory);
+        destroyBuffer(m_gridBuffer, m_gridMemory);
+        m_gridVertexCount = 0;
+        m_gridAllocation = 0;
         m_vertexAllocation = m_indexAllocation = 0;
         m_ranges.clear();
         m_uploadedIndexCount = 0;
         m_uploadedVertexCount = 0;
         if (!m_window->scene().hasModel()) {
             m_uploadedRevision = m_window->modelRevision();
+            m_uploadedGridRevision = m_window->gridRevision();
             m_window->setResourceStats(m_overlayAllocation + m_pick.readbackAllocation, 0, 0, 0, 0,
                                        int(bool(m_overlayBuffer)) + int(bool(m_pick.readback)));
             return;
         }
         const Mesh& mesh = m_window->scene().mesh();
+        rebuildGrid();
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
         for (const SubMesh& subMesh : mesh.subMeshes) {
@@ -1044,6 +1142,7 @@ private:
                 << "indices=" << m_uploadedIndexCount << "ranges=" << m_ranges.size();
         // Vulkan 缓冲已经建立，释放 CPU 顶点和索引；场景元数据仍然保留。
         m_window->scene().mesh().releaseGeometry();
+        m_window->modelUploadFinished();
     }
 
     void rebuildTextures()
@@ -1065,10 +1164,10 @@ private:
                 if (texture->view) { gpu += texture->allocationSize; ++count; }
                 if (!texture->source.isNull()) cpu += qint64(texture->source.bytesPerLine()) * texture->source.height();
             }
-        m_window->setResourceStats(m_vertexAllocation + m_uniformAllocation + m_overlayAllocation +
+        m_window->setResourceStats(m_vertexAllocation + m_uniformAllocation + m_overlayAllocation + m_gridAllocation +
                                    m_pick.readbackAllocation, m_indexAllocation, gpu, cpu, count,
                                    int(bool(m_vertexBuffer)) + int(bool(m_uniformBuffer)) +
-                                   int(bool(m_overlayBuffer)) + int(bool(m_pick.readback)));
+                                   int(bool(m_overlayBuffer)) + int(bool(m_gridBuffer)) + int(bool(m_pick.readback)));
     }
 
     VkShaderModule createShaderModule(const QByteArray& bytes)
@@ -1115,7 +1214,7 @@ private:
         VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO}; viewport.viewportCount = 1; viewport.scissorCount = 1;
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO}; raster.polygonMode = picking ? VK_POLYGON_MODE_FILL : m_window->scene().options().wireframe && m_wireframeSupported ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL; raster.cullMode = picking ? VK_CULL_MODE_NONE : m_window->scene().options().faceCulling ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE; raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; raster.lineWidth = 1.0f;
         VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO}; multisample.rasterizationSamples = singleSample || picking ? VK_SAMPLE_COUNT_1_BIT : m_window->sampleCountFlagBits();
-        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; depth.depthTestEnable = picking || m_window->scene().options().depthTest ? VK_TRUE : VK_FALSE; depth.depthWriteEnable = depth.depthTestEnable; depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; depth.depthTestEnable = picking || m_window->scene().options().depthTest ? VK_TRUE : VK_FALSE; depth.depthWriteEnable = depth.depthTestEnable; depth.depthCompareOp = VK_COMPARE_OP_LESS;
         VkPipelineColorBlendAttachmentState attachment{}; attachment.colorWriteMask = 0xf;
         VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; blend.attachmentCount = 1; blend.pAttachments = &attachment;
         VkDynamicState states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -1141,6 +1240,7 @@ private:
         raster.cullMode = VK_CULL_MODE_FRONT_BIT;
         depth.depthTestEnable = VK_TRUE;
         depth.depthWriteEnable = VK_FALSE;
+        depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         if (m_df->vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipeline,
                                              nullptr, &outlinePipeline) != VK_SUCCESS)
             qWarning() << "Vulkan selection outline pipeline failed";
@@ -1157,7 +1257,7 @@ private:
             qWarning() << "Vulkan selection overlay pipeline failed";
     }
 
-    void createOverlayPipeline(bool singleSample = false)
+    void createOverlayPipeline(bool singleSample = false, bool grid = false)
     {
         if (!m_overlayVertexShader || !m_overlayFragmentShader) return;
         if (!m_overlayPipelineLayout) {
@@ -1193,7 +1293,9 @@ private:
         VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         multisample.rasterizationSamples = singleSample ? VK_SAMPLE_COUNT_1_BIT : m_window->sampleCountFlagBits();
         VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+        depth.depthTestEnable = grid ? VK_TRUE : VK_FALSE;
+        depth.depthWriteEnable = VK_FALSE;
+        depth.depthCompareOp = grid ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_ALWAYS;
         VkPipelineColorBlendAttachmentState attachment{};
         attachment.colorWriteMask = 0xf;
         VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
@@ -1216,7 +1318,9 @@ private:
         pipeline.pDynamicState = &dynamic;
         pipeline.layout = m_overlayPipelineLayout;
         pipeline.renderPass = singleSample ? m_singleSamplePass : m_window->defaultRenderPass();
-        VkPipeline& overlayPipeline = singleSample ? m_singleSampleOverlayPipeline : m_overlayPipeline;
+        VkPipeline& overlayPipeline = grid
+            ? (singleSample ? m_singleSampleGridPipeline : m_gridPipeline)
+            : (singleSample ? m_singleSampleOverlayPipeline : m_overlayPipeline);
         if (m_df->vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipeline,
                                              nullptr, &overlayPipeline) != VK_SUCCESS)
             qWarning() << "Vulkan overlay pipeline creation failed";
@@ -1230,17 +1334,21 @@ private:
         if (m_outlinePipeline) m_df->vkDestroyPipeline(m_device, m_outlinePipeline, nullptr);
         if (m_selectionPipeline) m_df->vkDestroyPipeline(m_device, m_selectionPipeline, nullptr);
         if (m_overlayPipeline) m_df->vkDestroyPipeline(m_device, m_overlayPipeline, nullptr);
+        if (m_gridPipeline) m_df->vkDestroyPipeline(m_device, m_gridPipeline, nullptr);
         if (m_singleSamplePipeline) m_df->vkDestroyPipeline(m_device, m_singleSamplePipeline, nullptr);
         if (m_singleSampleOutlinePipeline) m_df->vkDestroyPipeline(m_device, m_singleSampleOutlinePipeline, nullptr);
         if (m_singleSampleSelectionPipeline) m_df->vkDestroyPipeline(m_device, m_singleSampleSelectionPipeline, nullptr);
         if (m_singleSampleOverlayPipeline) m_df->vkDestroyPipeline(m_device, m_singleSampleOverlayPipeline, nullptr);
+        if (m_singleSampleGridPipeline) m_df->vkDestroyPipeline(m_device, m_singleSampleGridPipeline, nullptr);
         if (m_pipelineLayout) m_df->vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         if (m_overlayPipelineLayout) m_df->vkDestroyPipelineLayout(m_device, m_overlayPipelineLayout, nullptr);
         m_pipeline = m_outlinePipeline = m_selectionPipeline = VK_NULL_HANDLE;
         m_pipelineLayout = VK_NULL_HANDLE;
         m_overlayPipeline = VK_NULL_HANDLE;
+        m_gridPipeline = VK_NULL_HANDLE;
         m_singleSamplePipeline = m_singleSampleOutlinePipeline = m_singleSampleSelectionPipeline = VK_NULL_HANDLE;
         m_singleSampleOverlayPipeline = VK_NULL_HANDLE;
+        m_singleSampleGridPipeline = VK_NULL_HANDLE;
         m_overlayPipelineLayout = VK_NULL_HANDLE;
     }
 
@@ -1257,16 +1365,23 @@ private:
     VkPipeline m_outlinePipeline = VK_NULL_HANDLE;
     VkPipeline m_selectionPipeline = VK_NULL_HANDLE;
     VkPipeline m_overlayPipeline = VK_NULL_HANDLE;
+    VkPipeline m_gridPipeline = VK_NULL_HANDLE;
     VkPipeline m_singleSamplePipeline = VK_NULL_HANDLE;
     VkPipeline m_singleSampleOutlinePipeline = VK_NULL_HANDLE;
     VkPipeline m_singleSampleSelectionPipeline = VK_NULL_HANDLE;
     VkPipeline m_singleSampleOverlayPipeline = VK_NULL_HANDLE;
+    VkPipeline m_singleSampleGridPipeline = VK_NULL_HANDLE;
     VkRenderPass m_singleSamplePass = VK_NULL_HANDLE;
     std::vector<SingleSampleTarget> m_singleSampleTargets;
     PickTarget m_pick;
     VkPipelineLayout m_overlayPipelineLayout = VK_NULL_HANDLE;
     VkBuffer m_overlayBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_overlayMemory = VK_NULL_HANDLE;
+    VkBuffer m_gridBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_gridMemory = VK_NULL_HANDLE;
+    uint32_t m_gridVertexCount = 0;
+    VkDeviceSize m_gridAllocation = 0;
+    uint64_t m_uploadedGridRevision = UINT64_MAX;
     uint32_t m_arrowVertexCount = 0, m_ringVertexCount = 0, m_scaleVertexCount = 0;
     VkDeviceSize m_overlayAllocation = 0;
     uint64_t m_pipelineRevision = 0;
@@ -1305,11 +1420,68 @@ VulkanWindow::VulkanWindow(QVulkanInstance* instance, QWindow* parent) : QVulkan
     connect(&m_renderTimer, &QTimer::timeout, this, [this]() { requestUpdate(); });
 }
 
-VulkanWindow::~VulkanWindow() = default;
+VulkanWindow::~VulkanWindow()
+{
+    if (m_loadThread) {
+        m_loadThread->quit();
+        m_loadThread->wait();
+        delete m_loadWorker;
+        m_loadWorker = nullptr;
+        delete m_loadThread;
+    }
+}
 
 bool VulkanWindow::loadModel(const QString& path, QString* error)
 {
-    if (!m_scene.loadModel(path, error)) return false;
+    Mesh mesh;
+    if (!MeshLoader::load(path, mesh, error)) return false;
+    setLoadedMesh(std::move(mesh), path);
+    return true;
+}
+
+bool VulkanWindow::loadModelAsync(const QString& path)
+{
+    if (m_loading) return false;
+    if (!m_loadThread) {
+        qRegisterMetaType<Mesh>("Mesh");
+        m_loadThread = new QThread(this);
+        m_loadWorker = new ModelLoaderWorker;
+        m_loadWorker->moveToThread(m_loadThread);
+        connect(m_loadWorker, &ModelLoaderWorker::progress, this, [this](int percent) {
+            if (m_loading) emit progressChanged(std::min(90, percent * 9 / 10));
+        });
+        connect(m_loadWorker, &ModelLoaderWorker::finished, this,
+                [this](bool ok, const QString& error, const Mesh& mesh) {
+            if (!m_loading) return;
+            if (!ok) {
+                m_loading = false;
+                emit loadFailed(error.isEmpty() ? QStringLiteral("加载失败") : error);
+                emit loadFinished();
+                return;
+            }
+            setLoadedMesh(mesh, m_currentPath);
+            emit progressChanged(90);
+        });
+        m_loadThread->start();
+    }
+    m_currentPath = path;
+    m_loading = true;
+    emit loadStarted();
+    QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection, Q_ARG(QString, path));
+    return true;
+}
+
+void VulkanWindow::modelUploadFinished()
+{
+    if (!m_loading) return;
+    m_loading = false;
+    emit progressChanged(100);
+    emit loadFinished();
+}
+
+void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
+{
+    m_scene.setMesh(std::move(mesh), path);
     m_bounds.clear();
     m_visible.assign(m_scene.mesh().subMeshes.size(), true);
     m_transforms.assign(m_scene.mesh().subMeshes.size(), TransformState());
@@ -1333,8 +1505,10 @@ bool VulkanWindow::loadModel(const QString& path, QString* error)
     emit selectionChanged(false);
     emit historyChanged(false, false);
     ++m_modelRevision;
+    emit modelLoaded(QString("%1  顶点%2  三角%3  子网格%4")
+        .arg(QFileInfo(path).fileName()).arg(m_scene.mesh().vertexCount())
+        .arg(m_scene.mesh().triangleCount()).arg(subMeshCount()));
     requestUpdate();
-    return true;
 }
 
 void VulkanWindow::clearModel()

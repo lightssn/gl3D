@@ -3,6 +3,7 @@
 #include "gl3d_export.h"
 #include "mesh.h"
 #include <QString>
+#include <QObject>
 #include <functional>
 
 //模型加载入口 按扩展名分发obj/stl/glb 返回是否成功
@@ -19,4 +20,14 @@ private:
                         const std::function<void(int)>& progress);
     static bool loadGlb(const QString& path, Mesh& mesh, QString* err,
                         const std::function<void(int)>& progress);
+};
+
+// 解析工作对象可移至 QThread；两个渲染后端共用相同的进度回调。
+class GL3D_EXPORT ModelLoaderWorker : public QObject {
+    Q_OBJECT
+public slots:
+    void load(const QString& path);
+signals:
+    void progress(int percent);
+    void finished(bool ok, const QString& error, const Mesh& mesh);
 };

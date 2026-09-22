@@ -411,6 +411,7 @@ void VulkanWindow::setDeviceDescription(const QString& name, const QString& vers
 void VulkanWindow::setClearColor(float red, float green, float blue)
 {
     m_clearColor[0] = red; m_clearColor[1] = green; m_clearColor[2] = blue;
+    ++m_gridRevision;
     requestUpdate();
 }
 
