@@ -14,6 +14,8 @@ add_library(gl3d_core SHARED
     meshloader.h
     meshloader.cpp
     meshloader_glb.cpp
+    osgbstream.h
+    osgbstream.cpp
     camera.h
     camera.cpp
     shader.h
@@ -23,6 +25,19 @@ add_library(gl3d_core SHARED
     glwidget.h
     glwidget.cpp
 )
+
+if(GL3D_HAS_OSGB)
+    target_compile_definitions(gl3d_core PUBLIC GL3D_HAS_OSGB=1)
+    target_link_libraries(gl3d_core PRIVATE unofficial::osg::osg unofficial::osg::osgDB unofficial::osg::osgUtil)
+    foreach(plugin_dir IN LISTS GL3D_OSG_PLUGIN_DIRS)
+        string(REPLACE "\\" "/" plugin_dir_forward "${plugin_dir}")
+        if(plugin_dir_forward MATCHES "/debug/")
+            target_compile_definitions(gl3d_core PRIVATE "GL3D_OSG_PLUGIN_DEBUG=\"${plugin_dir_forward}\"")
+        else()
+            target_compile_definitions(gl3d_core PRIVATE "GL3D_OSG_PLUGIN_RELEASE=\"${plugin_dir_forward}\"")
+        endif()
+    endforeach()
+endif()
 
 if(GL3D_HAS_VULKAN)
     target_sources(gl3d_core PRIVATE

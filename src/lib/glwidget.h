@@ -50,6 +50,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         OverlayMesh m_gridMesh;       //XY平面网格
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
         OverlayMesh m_gizmoMesh;      //模型中央操作器
+        OverlayMesh m_tileBoundsMesh;
         TransformMode m_transformMode = None;
         int& m_selectedSubMesh = m_scene.selection().indexRef();
 
@@ -97,6 +98,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         QElapsedTimer m_fpsTimer;
         QElapsedTimer m_frameTimer;
         QTimer* m_renderTimer = nullptr;
+        QTimer* m_osgbTimer = nullptr;
         std::vector<float> m_frameTimesMs;
         RenderOptions& m_renderOptions = m_scene.options();
         bool& m_wireframe = m_renderOptions.wireframe;
@@ -131,10 +133,12 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         void rebuildGrid();
         void rebuildGizmo();
         void refreshOverlays();
+        void rebuildTileBounds();
         void createPickTarget(int w, int h);
         void pickAt(const QPoint& pos);
         void drawGrid(const QMatrix4x4& proj, const QMatrix4x4& view);
         void drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view);
+        void renderSelectedGeometry();
         void drawGizmo(const QMatrix4x4& proj, const QMatrix4x4& view);
         void drawAxesHud(const QMatrix4x4& view);
 
@@ -175,6 +179,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         void setOrtho(bool on);          //true正交 false透视
         void setTransformMode(int mode); //0无 1平移 2旋转 3缩放
         void setWireframe(bool on);      //true线框模式 可见三角面带浅灰描边
+        void setTileBounds(bool enabled) override;
         void setAntialiasing(bool on);
         void setMipmaps(bool on);
         void setShowGrid(bool on);

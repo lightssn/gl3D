@@ -237,6 +237,7 @@ public:
 
     void startNextFrame() override
     {
+        m_window->refreshOsgb();
         createModelBuffers();
         if (m_uniformImageCount && m_uniformImageCount != m_window->swapChainImageCount()) {
             m_df->vkDeviceWaitIdle(m_device);
@@ -295,7 +296,8 @@ public:
         const VkDeviceSize offset = 0;
         m_df->vkCmdSetViewport(cmd, 0, 1, &viewport);
         m_df->vkCmdSetScissor(cmd, 0, 1, &scissor);
-        if (m_window->scene().options().showGrid && gridPipeline && m_gridBuffer && m_gridVertexCount) {
+        if ((m_window->scene().options().showGrid || m_window->scene().options().showTileBounds) &&
+            gridPipeline && m_gridBuffer && m_gridVertexCount) {
             const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() * frame.projection * frame.view;
             m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline);
             m_df->vkCmdBindVertexBuffers(cmd, 0, 1, &m_gridBuffer, &offset);
@@ -349,10 +351,15 @@ public:
                 ++drawCalls;
             }
             const int selected = m_window->selectedSubMesh();
-            if (selected >= 0 && selected < m_ranges.size() && m_window->subMeshVisible(selected) &&
-                options.showSelection && m_ranges[selected].descriptor) {
-                const DrawRange& range = m_ranges[selected];
-                const uint32_t dynamicOffset = uint32_t(frameOffset + m_uniformStride * selected);
+            const OsgbStream* osgb = m_window->scene().osgb();
+            const auto* ids = osgb ? &osgb->tileIds() : nullptr;
+            for (int selectedDraw = 0; selectedDraw < m_ranges.size(); ++selectedDraw) {
+                const bool sameTile = selected >= 0 && ids && selected < int(ids->size()) &&
+                    selectedDraw < int(ids->size()) && (*ids)[size_t(selected)] == (*ids)[size_t(selectedDraw)];
+                if (!options.showSelection || (selectedDraw != selected && !sameTile) ||
+                    !m_window->subMeshVisible(selectedDraw) || !m_ranges[selectedDraw].descriptor) continue;
+                const DrawRange& range = m_ranges[selectedDraw];
+                const uint32_t dynamicOffset = uint32_t(frameOffset + m_uniformStride * selectedDraw);
                 m_df->vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0,
                                               1, &range.descriptor, 1, &dynamicOffset);
                 if (outlinePipeline && options.outlineWidth > 0.0f) {
@@ -500,14 +507,36 @@ private:
             };
             const float extent = radius * 1.5f;
             const float z = -extent * 0.001f;
-            for (int i = 0; i <= 8; ++i) {
+            if (m_window->scene().options().showGrid) for (int i = 0; i <= 8; ++i) {
                 const float p = -extent + i * extent * 0.25f;
                 line({-extent, p, z}, {extent, p, z}, base);
                 line({p, -extent, z}, {p, extent, z}, base);
             }
-            line({-extent, 0, z}, {extent, 0, z}, base * 1.7f);
-            line({0, -extent, z}, {0, extent, z}, base * 1.7f);
-            if (createBuffer(vertices.size() * sizeof(OverlayVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            if (m_window->scene().options().showGrid) {
+                line({-extent, 0, z}, {extent, 0, z}, base * 1.7f);
+                line({0, -extent, z}, {0, extent, z}, base * 1.7f);
+            }
+            if (m_window->scene().options().showTileBounds) {
+                if (const OsgbStream* stream = m_window->scene().osgb()) {
+                    const auto& mins = stream->tileMins();
+                    const auto& maxs = stream->tileMaxs();
+                    const auto& ids = stream->tileIds();
+                    const QVector3D color(1.0f, 0.7f, 0.12f);
+                    for (size_t i = 0; i < mins.size(); ++i) {
+                        if (i && i < ids.size() && ids[i] == ids[i-1]) continue;
+                        const auto& a = mins[i]; const auto& b = maxs[i];
+                        const QVector3D p[8] = {{a.x(),a.y(),a.z()}, {b.x(),a.y(),a.z()},
+                            {b.x(),b.y(),a.z()}, {a.x(),b.y(),a.z()}, {a.x(),a.y(),b.z()},
+                            {b.x(),a.y(),b.z()}, {b.x(),b.y(),b.z()}, {a.x(),b.y(),b.z()}};
+                        for (int e = 0; e < 12; ++e) {
+                            const int u = e < 4 ? e : e < 8 ? e-4+4 : e-8;
+                            const int v = e < 4 ? (e+1)%4 : e < 8 ? (e-4+1)%4+4 : e-8+4;
+                            line(p[u],p[v],color);
+                        }
+                    }
+                }
+            }
+            if (!vertices.empty() && createBuffer(vertices.size() * sizeof(OverlayVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                              vertices.data(), m_gridBuffer, m_gridMemory, &m_gridAllocation))
                 m_gridVertexCount = uint32_t(vertices.size());
         }
@@ -1127,6 +1156,7 @@ private:
             destroyBuffer(m_vertexBuffer, m_vertexMemory);
             destroyBuffer(m_indexBuffer, m_indexMemory);
             m_ranges.clear();
+            if (vertices.empty() || indices.empty()) m_uploadedRevision = m_window->modelRevision();
             return;
         }
         if (!m_whiteTexture.view) {
@@ -1428,6 +1458,8 @@ VulkanWindow::VulkanWindow(QVulkanInstance* instance, QWindow* parent) : QVulkan
     m_frameTimer.start();
     m_renderTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_renderTimer, &QTimer::timeout, this, [this]() { requestUpdate(); });
+    m_osgbTimer.setInterval(33);
+    connect(&m_osgbTimer, &QTimer::timeout, this, [this]() { requestUpdate(); });
 }
 
 VulkanWindow::~VulkanWindow()
@@ -1443,6 +1475,21 @@ VulkanWindow::~VulkanWindow()
 
 bool VulkanWindow::loadModel(const QString& path, QString* error)
 {
+    if (QFileInfo(path).isDir() || QFileInfo(path).suffix().compare("osgb", Qt::CaseInsensitive) == 0) {
+        if (!m_scene.openOsgb(path, error)) return false;
+        m_bounds.clear();
+        m_visible.assign(subMeshCount(), true);
+        m_transforms.assign(subMeshCount(), TransformState());
+        for (size_t i=0; i<m_scene.osgb()->tileMins().size(); ++i)
+            m_bounds.push_back({m_scene.osgb()->tileMins()[i],m_scene.osgb()->tileMaxs()[i]});
+        m_undo.clear(); m_redo.clear();
+        m_scene.options().outlineWidth = std::clamp(m_scene.osgb()->rootRadius() * 0.0005f, 0.001f, 0.5f);
+        ++m_modelRevision;
+        m_osgbTimer.start();
+        emit modelLoaded(QString("%1  OSGB 瓦片流").arg(QFileInfo(path).fileName()));
+        requestUpdate();
+        return true;
+    }
     Mesh mesh;
     if (!MeshLoader::load(path, mesh, error)) return false;
     setLoadedMesh(std::move(mesh), path);
@@ -1452,6 +1499,14 @@ bool VulkanWindow::loadModel(const QString& path, QString* error)
 bool VulkanWindow::loadModelAsync(const QString& path)
 {
     if (m_loading) return false;
+    if (QFileInfo(path).isDir() || QFileInfo(path).suffix().compare("osgb", Qt::CaseInsensitive) == 0) {
+        emit loadStarted();
+        QString error;
+        const bool ok = loadModel(path, &error);
+        if (!ok) emit loadFailed(error);
+        emit loadFinished();
+        return ok;
+    }
     if (!m_loadThread) {
         qRegisterMetaType<Mesh>("Mesh");
         m_loadThread = new QThread(this);
@@ -1491,6 +1546,7 @@ void VulkanWindow::modelUploadFinished()
 
 void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
 {
+    m_osgbTimer.stop();
     m_scene.setMesh(std::move(mesh), path);
     m_bounds.clear();
     m_visible.assign(m_scene.mesh().subMeshes.size(), true);
@@ -1521,8 +1577,31 @@ void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
     requestUpdate();
 }
 
+void VulkanWindow::refreshOsgb()
+{
+    if (!m_scene.updateOsgb(size())) return;
+    m_bounds.clear();
+    const OsgbStream* stream = m_scene.osgb();
+    for (size_t i=0; i<stream->tileMins().size(); ++i)
+        m_bounds.push_back({stream->tileMins()[i],stream->tileMaxs()[i]});
+    m_visible.assign(subMeshCount(), true);
+    m_transforms.assign(subMeshCount(), TransformState());
+    m_undo.clear(); m_redo.clear();
+    emit historyChanged(false, false);
+    emit selectionChanged(false);
+    ++m_modelRevision;
+}
+
+void VulkanWindow::setTileBounds(bool enabled)
+{
+    m_scene.options().showTileBounds = enabled;
+    ++m_gridRevision;
+    requestUpdate();
+}
+
 void VulkanWindow::clearModel()
 {
+    m_osgbTimer.stop();
     m_scene.clear();
     m_bounds.clear();
     m_visible.clear();

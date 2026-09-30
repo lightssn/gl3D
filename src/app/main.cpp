@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion("1.0");
 
     QCommandLineParser parser;
-    parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb → OpenGL渲染");
+    parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb/osgb → OpenGL/Vulkan渲染");
     parser.addHelpOption();
     parser.addVersionOption();
 #if defined(GL3D_HAS_VULKAN)
@@ -59,7 +59,7 @@ int main(int argc, char* argv[]) {
 #endif
     QCommandLineOption infoOpt({"i", "info"}, "仅打印模型信息 不启动GUI");
     parser.addOption(infoOpt);
-    parser.addPositionalArgument("model", "模型文件路径 stl/obj/glb");
+    parser.addPositionalArgument("model", "模型文件路径 stl/obj/glb/osgb");
     parser.process(app);
 
     const QStringList args = parser.positionalArguments();

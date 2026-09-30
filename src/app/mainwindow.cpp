@@ -45,6 +45,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_toolBar = addToolBar("主工具栏");
     m_toolBar->setMovable(false);
     QAction* actOpen = m_toolBar->addAction("打开模型");
+    QAction* actOpenOsgbDirectory = m_toolBar->addAction("打开 OSGB 目录");
     QAction* actReset = m_toolBar->addAction("复位视角");
     m_actDebug = m_toolBar->addAction("调试器");
     m_themeBtn = new QPushButton("日间模式", this);
@@ -168,9 +169,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(actOpen, &QAction::triggered, this, [this]() {
         QString path = QFileDialog::getOpenFileName(
-                           this, "选择模型", QString(), "模型文件 (*.stl *.obj *.glb);;所有文件 (*)");
+                           this, "选择模型", QString(), "模型文件 (*.stl *.obj *.glb *.osgb);;所有文件 (*)");
         if (!path.isEmpty()) openModel(path);
         });
+    connect(actOpenOsgbDirectory, &QAction::triggered, this, [this]() {
+        const QString path = QFileDialog::getExistingDirectory(this, "选择 OSGB 瓦片目录");
+        if (!path.isEmpty()) openModel(path);
+    });
     connect(actReset, &QAction::triggered, this, [this]() { activeView()->resetView(); });
     m_actDebug->setCheckable(true);
     connect(m_actDebug, &QAction::toggled, m_debugWindow, &QWidget::setVisible);

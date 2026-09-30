@@ -20,6 +20,7 @@ public:
     virtual void resetView() = 0;
     virtual void setOrtho(bool enabled) = 0;
     virtual void setWireframe(bool enabled) = 0;
+    virtual void setTileBounds(bool enabled) = 0;
     virtual void setAntialiasing(bool enabled) = 0;
     virtual bool supportsAntialiasing() const { return true; }
     virtual void setMipmaps(bool enabled) = 0;

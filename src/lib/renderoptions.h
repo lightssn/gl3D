@@ -12,6 +12,7 @@ struct RenderOptions {
     bool pbr = false;
     bool normalMap = true;
     bool wireframe = false;
+    bool showTileBounds = false;
     bool fixedFps = false;
     int targetFps = 60;
     int debugView = 0;

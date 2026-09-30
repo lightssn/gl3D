@@ -1,6 +1,7 @@
 #include "debugwindow.h"
 #include "glwidget.h"
 #include "renderview.h"
+#include "renderscene.h"
 #include <QAbstractScrollArea>
 #include <QCheckBox>
 #include <QComboBox>
@@ -78,6 +79,12 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
 
     auto* viewBox = new QGroupBox("调试视图", content); auto* viewLayout = new QGridLayout(viewBox); auto* debugView = new QComboBox(viewBox); debugView->addItems({"光照结果", "法线", "UV"}); viewLayout->addWidget(new QLabel("着色模式", viewBox), 0, 0); viewLayout->addWidget(debugView, 0, 1); connect(debugView, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int mode) { m_renderView->setDebugView(mode); }); layout->addWidget(viewBox);
     m_debugView = debugView;
+    m_tileBounds = new QCheckBox("显示瓦片外框", viewBox);
+    viewLayout->addWidget(m_tileBounds, 1, 0, 1, 2);
+    connect(m_tileBounds, &QCheckBox::toggled, this, [this](bool on) { m_renderView->setTileBounds(on); });
+    m_tileStats = new QLabel(viewBox);
+    m_tileStats->setWordWrap(true);
+    viewLayout->addWidget(m_tileStats, 2, 0, 1, 2);
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
 
     auto* resourceBox = new QGroupBox("GPU 对象占用", content); auto* resourceLayout = new QVBoxLayout(resourceBox); resourceLayout->setContentsMargins(5, 8, 5, 5);
@@ -90,7 +97,20 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
     auto* subMeshBox = new QGroupBox("子网格", content); auto* subMeshLayout = new QVBoxLayout(subMeshBox); subMeshLayout->setContentsMargins(5, 8, 5, 5);
     m_subMeshes = new QListWidget(subMeshBox); m_subMeshes->setSelectionMode(QAbstractItemView::SingleSelection); m_subMeshes->setMinimumHeight(0); m_subMeshes->setMaximumHeight(180); m_subMeshes->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_subMeshes->setTextElideMode(Qt::ElideRight); m_subMeshes->setStyleSheet("QListWidget { background: #0d1117; color: #e6edf3; } QListWidget::item:selected { background: #246a9e; color: #ffffff; } QListWidget::item:hover { background: #1d3f5a; }");
     connect(m_subMeshes, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
-        m_renderView->setSubMeshVisible(m_subMeshes->row(item), item->checkState() == Qt::Checked);
+        const int index = m_subMeshes->row(item);
+        const bool visible = item->checkState() == Qt::Checked;
+        if (const OsgbStream* stream = m_renderView->scene().osgb()) {
+            const auto& ids = stream->tileIds();
+            if (index >= 0 && index < int(ids.size())) {
+                QSignalBlocker blocker(m_subMeshes);
+                for (int i=0; i<int(ids.size()); ++i) if (ids[size_t(i)] == ids[size_t(index)]) {
+                    m_renderView->setSubMeshVisible(i, visible);
+                    if (m_subMeshes->item(i)) m_subMeshes->item(i)->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
+                }
+                return;
+            }
+        }
+        m_renderView->setSubMeshVisible(index, visible);
         });
     connect(m_subMeshes, &QListWidget::currentRowChanged, this, [this](int row) {
         m_renderView->selectSubMesh(row);
@@ -125,6 +145,7 @@ void DebugWindow::setRenderView(RenderView* view) {
     view->setFixedFpsEnabled(m_fixedFps->isChecked());
     view->setTargetFps(m_fpsSpin->value());
     view->setDebugView(m_debugView->currentIndex());
+    view->setTileBounds(m_tileBounds->isChecked());
     refreshSubMeshes();
     refresh();
 }
@@ -156,6 +177,15 @@ void DebugWindow::setNightMode(bool night) {
 void DebugWindow::refresh() {
     if (!isVisible()) return;
     const DebugSnapshot s = m_renderView->debugSnapshot();
+    const OsgbStream* stream = m_renderView->scene().osgb();
+    m_tileBounds->setEnabled(stream != nullptr);
+    m_pbr->setEnabled(stream == nullptr);
+    m_normalMap->setEnabled(stream == nullptr);
+    if (stream) {
+        const auto tiles = stream->stats();
+        m_tileStats->setText(QString("瓦片：可见 %1 / 已发现 %2  加载中 %3  失败 %4  CPU 缓存 %5")
+            .arg(tiles.visible).arg(tiles.tiles).arg(tiles.pending).arg(tiles.failed).arg(bytesText(tiles.cacheBytes)));
+    } else m_tileStats->clear();
     refreshSubMeshes();
     if (!m_outlineWidth->hasFocus() && std::abs(m_outlineWidth->value() - m_renderView->outlineWidth()) > 0.0001) {
         QSignalBlocker blocker(m_outlineWidth);
