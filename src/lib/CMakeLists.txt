@@ -1,5 +1,8 @@
 # gl3d_core 动态库 模型加载+OpenGL渲染
 add_library(gl3d_core SHARED
+    tilenode.h
+    tilestream.h
+    tilestream.cpp
     glcontext.h
     debugstats.h
     renderoptions.h
@@ -23,6 +26,12 @@ add_library(gl3d_core SHARED
     glwidget.h
     glwidget.cpp
 )
+
+if(GL3D_ENABLE_OSGB)
+    target_sources(gl3d_core PRIVATE osgbloader.h osgbloader.cpp)
+    target_compile_definitions(gl3d_core PUBLIC GL3D_HAS_OSGB=1)
+    target_link_libraries(gl3d_core PRIVATE unofficial::osg::osgDB unofficial::osg::osg)
+endif()
 
 if(GL3D_HAS_VULKAN)
     target_sources(gl3d_core PRIVATE

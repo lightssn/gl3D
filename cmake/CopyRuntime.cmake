@@ -1,0 +1,3 @@
+if(SOURCE AND EXISTS "${SOURCE}")
+    file(COPY "${SOURCE}" DESTINATION "${DESTINATION}")
+endif()

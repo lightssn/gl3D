@@ -17,6 +17,11 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 option(GL3D_ENABLE_VULKAN "Build the optional Vulkan backend" ON)
+option(GL3D_ENABLE_OSGB "Read OSGB using OpenSceneGraph (own renderers)" ON)
+if(GL3D_ENABLE_OSGB)
+    find_package(unofficial-osg CONFIG REQUIRED COMPONENTS plugins)
+endif()
+include(cmake/DeployOsg.cmake)
 
 find_package(Qt6 QUIET COMPONENTS Widgets Gui OpenGL OpenGLWidgets)
 if(Qt6_FOUND)

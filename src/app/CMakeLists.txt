@@ -11,6 +11,7 @@ target_link_libraries(gl3d PRIVATE
     gl3d_core
     ${GL3D_QT_WIDGETS_TARGET}
 )
+gl3d_deploy_osg(gl3d)
 
 # 主题文件部署到exe同目录
 foreach(qss theme_night.qss theme_day.qss)

@@ -22,6 +22,8 @@ public:
     virtual void setWireframe(bool enabled) = 0;
     virtual void setAntialiasing(bool enabled) = 0;
     virtual bool supportsAntialiasing() const { return true; }
+    virtual bool supportsPbr() const { return !scene().tiled(); }
+    virtual bool supportsNormalMap() const { return !scene().tiled(); }
     virtual void setMipmaps(bool enabled) = 0;
     virtual void setDepthTest(bool enabled) = 0;
     virtual void setFaceCulling(bool enabled) = 0;

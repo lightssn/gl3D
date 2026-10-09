@@ -126,12 +126,24 @@ void DebugWindow::setRenderView(RenderView* view) {
     view->setTargetFps(m_fpsSpin->value());
     view->setDebugView(m_debugView->currentIndex());
     refreshSubMeshes();
+    m_pbr->setEnabled(m_renderView->supportsPbr());
+    m_normalMap->setEnabled(m_renderView->supportsNormalMap());
+    m_pbr->setToolTip(m_renderView->supportsPbr()?QString():QStringLiteral("OSGB 基础材质未提供 PBR 数据"));
+    m_normalMap->setToolTip(m_renderView->supportsNormalMap()?QString():QStringLiteral("OSGB 导入未映射法线贴图"));
+    if(!m_renderView->supportsPbr()) { QSignalBlocker blocker(m_pbr); m_pbr->setChecked(false); }
+    if(!m_renderView->supportsNormalMap()) { QSignalBlocker blocker(m_normalMap); m_normalMap->setChecked(false); }
     refresh();
 }
 
 void DebugWindow::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     refreshSubMeshes();
+    m_pbr->setEnabled(m_renderView->supportsPbr());
+    m_normalMap->setEnabled(m_renderView->supportsNormalMap());
+    m_pbr->setToolTip(m_renderView->supportsPbr()?QString():QStringLiteral("OSGB 基础材质未提供 PBR 数据"));
+    m_normalMap->setToolTip(m_renderView->supportsNormalMap()?QString():QStringLiteral("OSGB 导入未映射法线贴图"));
+    if(!m_renderView->supportsPbr()) { QSignalBlocker blocker(m_pbr); m_pbr->setChecked(false); }
+    if(!m_renderView->supportsNormalMap()) { QSignalBlocker blocker(m_normalMap); m_normalMap->setChecked(false); }
     refresh();
 }
 
@@ -157,12 +169,23 @@ void DebugWindow::refresh() {
     if (!isVisible()) return;
     const DebugSnapshot s = m_renderView->debugSnapshot();
     refreshSubMeshes();
+    m_pbr->setEnabled(m_renderView->supportsPbr());
+    m_normalMap->setEnabled(m_renderView->supportsNormalMap());
+    m_pbr->setToolTip(m_renderView->supportsPbr()?QString():QStringLiteral("OSGB 基础材质未提供 PBR 数据"));
+    m_normalMap->setToolTip(m_renderView->supportsNormalMap()?QString():QStringLiteral("OSGB 导入未映射法线贴图"));
+    if(!m_renderView->supportsPbr()) { QSignalBlocker blocker(m_pbr); m_pbr->setChecked(false); }
+    if(!m_renderView->supportsNormalMap()) { QSignalBlocker blocker(m_normalMap); m_normalMap->setChecked(false); }
     if (!m_outlineWidth->hasFocus() && std::abs(m_outlineWidth->value() - m_renderView->outlineWidth()) > 0.0001) {
         QSignalBlocker blocker(m_outlineWidth);
         m_outlineWidth->setValue(m_renderView->outlineWidth());
     }
     m_cameraLabel->setText(QString("相机：%1  FOV：%2°  距离：%3\n眼睛 (%4, %5, %6)  目标 (%7, %8, %9)").arg(s.ortho ? "正交" : "透视").arg(s.fov, 0, 'f', 1).arg(s.distance, 0, 'f', 3).arg(s.eye.x(), 0, 'f', 2).arg(s.eye.y(), 0, 'f', 2).arg(s.eye.z(), 0, 'f', 2).arg(s.target.x(), 0, 'f', 2).arg(s.target.y(), 0, 'f', 2).arg(s.target.z(), 0, 'f', 2));
     m_timingLabel->setText(QString("FPS：%1   平均：%2 ms   1% Low：%3 FPS\nP95：%4 ms   P99：%5 ms   最慢：%6 ms\n绘制调用：%7").arg(s.fps).arg(s.averageFrameMs, 0, 'f', 2).arg(s.onePercentLowFps, 0, 'f', 1).arg(s.p95FrameMs, 0, 'f', 2).arg(s.p99FrameMs, 0, 'f', 2).arg(s.lowFrameMs, 0, 'f', 2).arg(s.drawCalls));
+    if(m_renderView->scene().tiled()) {
+        const auto stats=m_renderView->scene().tileStats();
+        m_timingLabel->setText(m_timingLabel->text()+QString("\n瓦片单元：驻留 %1 / 可见 %2\n加载 %3 / 排队 %4 / 回收 %5 / 失败 %6\n驻留估算 %7").arg(stats.resident).arg(stats.visible).arg(stats.loading).arg(stats.queued).arg(stats.evicted).arg(stats.failures).arg(bytesText(stats.bytes)));
+        m_timingLabel->setToolTip(stats.lastError);
+    } else m_timingLabel->setToolTip(QString());
     m_graph->setSamples(s.frameTimesMs);
     m_resources->clearContents();
     qint64 totalCpu = 0, totalGpu = 0;
@@ -204,7 +227,12 @@ void DebugWindow::refreshSubMeshes() {
     if (!changed) {
         QSignalBlocker blocker(m_subMeshes);
         for (int i = 0; i < count; ++i)
-            m_subMeshes->item(i)->setCheckState(m_renderView->subMeshVisible(i) ? Qt::Checked : Qt::Unchecked);
+        {
+            auto* item = m_subMeshes->item(i);
+            const bool resident = !m_renderView->scene().tiled() || m_renderView->scene().mesh().subMeshes[size_t(i)].resident;
+            item->setFlags(resident ? item->flags() | Qt::ItemIsEnabled : item->flags() & ~Qt::ItemIsEnabled);
+            item->setCheckState(m_renderView->subMeshVisible(i) ? Qt::Checked : Qt::Unchecked);
+        }
         return;
     }
     QSignalBlocker blocker(m_subMeshes);
@@ -212,6 +240,8 @@ void DebugWindow::refreshSubMeshes() {
     for (int i = 0; i < count; ++i) {
         auto* item = new QListWidgetItem(m_renderView->subMeshName(i), m_subMeshes);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        if (m_renderView->scene().tiled() && !m_renderView->scene().mesh().subMeshes[size_t(i)].resident)
+            item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
         item->setCheckState(m_renderView->subMeshVisible(i) ? Qt::Checked : Qt::Unchecked);
     }
     m_subMeshCount = count;

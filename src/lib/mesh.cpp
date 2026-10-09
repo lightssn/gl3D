@@ -2,13 +2,13 @@
 
 int Mesh::triangleCount() const {
     int n = 0;
-    for (const auto& s : subMeshes) n += static_cast<int>(s.indices.size()) / 3;
+    for (const auto& s : subMeshes) n += s.resident ? std::max(static_cast<int>(s.indices.size()) / 3, s.savedTriangles) : 0;
     return n > 0 ? n : retainedTriangleCount;
 }
 
 int Mesh::vertexCount() const {
     int n = 0;
-    for (const auto& s : subMeshes) n += static_cast<int>(s.vertices.size());
+    for (const auto& s : subMeshes) n += s.resident ? std::max(static_cast<int>(s.vertices.size()), s.savedVertices) : 0;
     return n > 0 ? n : retainedVertexCount;
 }
 

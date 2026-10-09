@@ -5,17 +5,30 @@
 #include "cameracontroller.h"
 #include "selectioncontroller.h"
 #include "renderoptions.h"
+#include "tilestream.h"
 
 // OpenGL 和 Vulkan 共享的场景状态。
 // 这里不持有任何 API 对象，后端只负责把场景上传到自己的 GPU 资源。
 class GL3D_EXPORT RenderScene final {
 public:
+    ~RenderScene();
     bool loadModel(const QString& path, QString* error = nullptr);
     void setMesh(Mesh mesh, const QString& path = QString());
     void clear();
     void resetView();
 
-    bool hasModel() const { return !m_mesh.subMeshes.empty(); }
+    bool hasModel() const { return m_mesh.tileRoot || !m_mesh.subMeshes.empty(); }
+    bool tiled() const { return bool(m_stream); }
+    int tileRepresentative(int slot) const;
+    bool sameTile(int a, int b) const;
+    void updateTiles(const QSize& viewport);
+    void markUploaded(int slot);
+    bool drawable(int slot) const;
+    bool tileVisible(int slot) const;
+    void setTileVisible(int slot, bool visible);
+    QMatrix4x4 tileTransform(int slot) const;
+    void setTileTransform(int slot, const QMatrix4x4& matrix);
+    TileStats tileStats() const { return m_stream ? m_stream->stats() : TileStats(); }
     const QString& sourcePath() const { return m_sourcePath; }
     Mesh& mesh() { return m_mesh; }
     const Mesh& mesh() const { return m_mesh; }
@@ -27,10 +40,12 @@ public:
     const RenderOptions& options() const { return m_options; }
 
 private:
+    void refreshTileRepresentatives();
+    std::map<int, int> m_tileRepresentatives;
+    std::unique_ptr<TileStream> m_stream;
     Mesh m_mesh;
     CameraController m_cameraController;
     SelectionController m_selection;
     RenderOptions m_options;
     QString m_sourcePath;
 };
-

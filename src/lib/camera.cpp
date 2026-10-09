@@ -62,5 +62,5 @@ void Camera::panLocal(float right, float up, float forward) {
 void Camera::fitToSphere(const QVector3D& center, float radius) {
     m_target = center;
     m_radius = std::max(radius, 1e-4f);
-    m_distance = radius * 2.5f; //45°视场下完整容纳模型
+    m_distance = m_radius * 2.5f; //45°视场下完整容纳模型
 }

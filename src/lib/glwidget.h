@@ -15,6 +15,7 @@
 #include <QVector3D>
 #include <vector>
 #include <memory>
+#include <map>
 
 class Shader;//前向声明，cpp再引入头文件，改动后编译更快
 class MeshRenderer;
@@ -67,6 +68,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
 
         //变换历史 撤销/重做 每次拖拽前的状态入撤销栈
         struct TransformState { QVector3D pos; QQuaternion rot; QVector3D scale; };
+        std::map<int, TransformState> m_tileEdits;
         std::vector<TransformState> m_undoStack;
         std::vector<TransformState> m_redoStack;
         TransformState m_dragStartState; //当前拖拽起点 松开时对比是否变化

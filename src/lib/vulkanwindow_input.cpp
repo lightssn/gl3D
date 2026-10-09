@@ -51,8 +51,8 @@ void VulkanWindow::setMipmaps(bool enabled) {
 }
 void VulkanWindow::setDepthTest(bool enabled) { m_scene.options().depthTest = enabled; ++m_pipelineRevision; requestUpdate(); }
 void VulkanWindow::setFaceCulling(bool enabled) { m_scene.options().faceCulling = enabled; ++m_pipelineRevision; requestUpdate(); }
-void VulkanWindow::setPbr(bool enabled) { m_scene.options().pbr = enabled; requestUpdate(); }
-void VulkanWindow::setNormalMap(bool enabled) { m_scene.options().normalMap = enabled; requestUpdate(); }
+void VulkanWindow::setPbr(bool enabled) { m_scene.options().pbr = enabled && supportsPbr(); requestUpdate(); }
+void VulkanWindow::setNormalMap(bool enabled) { m_scene.options().normalMap = enabled && supportsNormalMap(); requestUpdate(); }
 void VulkanWindow::setDebugView(int mode) { m_scene.options().debugView = std::clamp(mode, 0, 2); requestUpdate(); }
 void VulkanWindow::setOutlineWidth(float width) { m_scene.options().outlineWidth = std::max(0.0f, width); requestUpdate(); }
 
@@ -87,11 +87,13 @@ QString VulkanWindow::subMeshName(int index) const
 
 bool VulkanWindow::subMeshVisible(int index) const
 {
+    if(m_scene.tiled()) return m_scene.tileVisible(index);
     return index >= 0 && index < int(m_visible.size()) && m_visible[size_t(index)];
 }
 
 void VulkanWindow::setSubMeshVisible(int index, bool visible)
 {
+    if(m_scene.tiled()) { m_scene.setTileVisible(index,visible); requestUpdate(); return; }
     if (index < 0 || index >= int(m_visible.size())) return;
     m_visible[size_t(index)] = visible;
     requestUpdate();
@@ -100,6 +102,7 @@ void VulkanWindow::setSubMeshVisible(int index, bool visible)
 void VulkanWindow::selectSubMesh(int index)
 {
     if (index < -1 || index >= subMeshCount()) return;
+    if (m_scene.tiled() && index >= 0 && !m_scene.mesh().subMeshes[size_t(index)].resident) return;
     if (index == selectedSubMesh()) { emit subMeshSelected(index); return; }
     m_scene.selection().indexRef() = index;
     m_undo.clear();
@@ -120,6 +123,7 @@ bool VulkanWindow::takePendingPick(QPoint& position)
 
 QMatrix4x4 VulkanWindow::subMeshTransform(int index) const
 {
+    if(m_scene.tiled()) return m_scene.tileTransform(index);
     QMatrix4x4 matrix;
     if (index < 0 || index >= int(m_transforms.size())) return matrix;
     const TransformState& state = m_transforms[size_t(index)];
@@ -154,6 +158,17 @@ QVector3D VulkanWindow::gizmoAxis(int index) const
         ? subMeshRotation(selected).rotatedVector(direction) : direction;
 }
 
+void VulkanWindow::commitTileTransform() {
+    const int index=selectedSubMesh();
+    if(!m_scene.tiled() || index<0 || index>=int(m_transforms.size())) return;
+    const auto& state=m_transforms[size_t(index)];
+    const auto center=m_scene.selection().centers()[size_t(index)];
+    QMatrix4x4 matrix; matrix.translate(center+state.position); matrix.rotate(state.rotation);
+    matrix.scale(state.scale); matrix.translate(-center);
+    m_scene.setTileTransform(index,matrix);
+    m_tileEdits[m_scene.mesh().subMeshes[size_t(index)].tileOwner]=state;
+}
+
 void VulkanWindow::undo()
 {
     const int index = selectedSubMesh();
@@ -161,6 +176,7 @@ void VulkanWindow::undo()
     m_redo.push_back(m_transforms[size_t(index)]);
     m_transforms[size_t(index)] = m_undo.back();
     m_undo.pop_back();
+    commitTileTransform();
     emit historyChanged(!m_undo.empty(), !m_redo.empty());
     requestUpdate();
 }
@@ -172,6 +188,7 @@ void VulkanWindow::redo()
     m_undo.push_back(m_transforms[size_t(index)]);
     m_transforms[size_t(index)] = m_redo.back();
     m_redo.pop_back();
+    commitTileTransform();
     emit historyChanged(!m_undo.empty(), !m_redo.empty());
     requestUpdate();
 }
@@ -192,7 +209,7 @@ int VulkanWindow::pickSubMesh(const QPoint& pos) const
     int hit = -1;
     float closest = FLT_MAX;
     for (int i = 0; i < int(m_bounds.size()); ++i) {
-        if (!subMeshVisible(i)) continue;
+        if (!subMeshVisible(i) || !m_scene.drawable(i)) continue;
         const QMatrix4x4 invModel = subMeshTransform(i).inverted();
         const QVector3D origin = invModel.map(rayStart);
         const QVector3D direction = invModel.map(rayEnd) - origin;
@@ -314,6 +331,7 @@ void VulkanWindow::mouseMoveEvent(QMouseEvent* event)
             const float value = std::clamp(transform.scale[m_dragAxis - 1] * (1.0f + along / 120.0f), 0.02f, 100.0f);
             transform.scale[m_dragAxis - 1] = value;
         }
+        commitTileTransform();
     } else if (m_dragButton == Qt::LeftButton) {
         m_scene.cameraController().camera().orbit(delta.x() * 0.008f, delta.y() * 0.008f);
     } else if (m_dragButton == Qt::RightButton || m_dragButton == Qt::MiddleButton) {

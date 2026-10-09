@@ -1,4 +1,7 @@
 #include "meshloader.h"
+#if defined(GL3D_HAS_OSGB)
+#include "osgbloader.h"
+#endif
 
 #include <QFile>
 #include <QFileInfo>
@@ -20,6 +23,9 @@ bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
                       const std::function<void(int)>& progress) {
     outMesh = Mesh{};
     QString suffix = QFileInfo(path).suffix().toLower();
+#if defined(GL3D_HAS_OSGB)
+    if (suffix == "osgb") return OsgbLoader::load(path, outMesh, err);
+#endif
     bool ok = false;
     if (suffix == "obj") ok = loadObj(path, outMesh, err, progress);
     else if (suffix == "stl") ok = loadStl(path, outMesh, err, progress);

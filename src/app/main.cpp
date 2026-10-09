@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "meshloader.h"
+#include "renderscene.h"
 
 #include <QApplication>
 #include <QFont>
@@ -25,6 +26,12 @@ static int runInfo(const QString& path) {
         fprintf(stderr, "[gl3d] 加载失败: %s\n", qPrintable(err));
         return 1;
         }
+    RenderScene infoScene;
+    if (mesh.tileRoot) {
+        infoScene.setMesh(std::move(mesh), path);
+        mesh = infoScene.mesh();
+        printf("[gl3d] OSGB: root resident geometry only; external pages load while viewing.\n");
+    }
     printf("[gl3d] %s\n", qPrintable(path));
     printf("  顶点:     %d\n", mesh.vertexCount());
     printf("  三角形:   %d\n", mesh.triangleCount());
@@ -33,7 +40,7 @@ static int runInfo(const QString& path) {
         printf("    - %s  三角%zu  纹理%s\n",
                s.materialName.empty() ? "(默认)" : s.materialName.c_str(),
                s.indices.size() / 3,
-               !s.textureData.isEmpty() ? "内嵌" : (s.texturePath.isEmpty() ? "无" : qPrintable(QFileInfo(s.texturePath).fileName())));
+               (!s.textureData.isEmpty() || !s.baseImage.isNull()) ? "内嵌" : (s.texturePath.isEmpty() ? "无" : qPrintable(QFileInfo(s.texturePath).fileName())));
     QVector3D mn = mesh.bboxMin, mx = mesh.bboxMax;
     printf("  包围盒:   (%.3f %.3f %.3f) ~ (%.3f %.3f %.3f)\n",
            mn.x(), mn.y(), mn.z(), mx.x(), mx.y(), mx.z());
@@ -50,7 +57,7 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion("1.0");
 
     QCommandLineParser parser;
-    parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb → OpenGL渲染");
+    parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb/osgb → OpenGL渲染");
     parser.addHelpOption();
     parser.addVersionOption();
 #if defined(GL3D_HAS_VULKAN)
@@ -59,7 +66,7 @@ int main(int argc, char* argv[]) {
 #endif
     QCommandLineOption infoOpt({"i", "info"}, "仅打印模型信息 不启动GUI");
     parser.addOption(infoOpt);
-    parser.addPositionalArgument("model", "模型文件路径 stl/obj/glb");
+    parser.addPositionalArgument("model", "模型文件路径 stl/obj/glb/osgb");
     parser.process(app);
 
     const QStringList args = parser.positionalArguments();

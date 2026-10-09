@@ -4,9 +4,13 @@
 #include <QMetaType>
 #include <QByteArray>
 #include <QVector3D>
+#include <QImage>
 #include <QString>
 #include <vector>
 #include <string>
+#include <memory>
+
+struct TileNode;
 
 //交错顶点 位置3+法线3+uv2 与着色器location 0/1/2对应
 struct Vertex {
@@ -17,6 +21,13 @@ struct Vertex {
 
 //按材质拆分的子网格 每个子网格独立纹理与VAO
 struct SubMesh {
+    QVector3D boundsMin, boundsMax;
+    int tileOwner = -1;
+    uint64_t revision = 0;
+    int savedVertices = 0, savedTriangles = 0;
+    qint64 residentBytes = 0;
+    QImage baseImage;
+    bool resident = true, drawable = true, uploaded = false;
     std::string materialName;        //usemtl名 stl为空
     std::vector<Vertex> vertices;
     std::vector<unsigned int> indices;
@@ -34,6 +45,7 @@ struct SubMesh {
 
 //整体网格 包围盒用于相机自动取景
 struct GL3D_EXPORT Mesh {
+    std::shared_ptr<TileNode> tileRoot;
     std::vector<SubMesh> subMeshes;
     QVector3D bboxMin;
     QVector3D bboxMax;

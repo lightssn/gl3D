@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdio>
 #include <numeric>
+#include <set>
 
 static const float kPi = 3.14159265f;
 
@@ -97,7 +98,7 @@ void GLWidget::initializeGL() {
 
     //构造函数期间收到过加载请求 此时补传显存
     if (!m_mesh.subMeshes.empty() && m_mesh.vertexCount() > 0) {
-        m_renderer->upload(m_mesh);
+        if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
         refreshOverlays();
         }
     }
@@ -133,6 +134,12 @@ void GLWidget::paintGL() {
         m_fpsTimer.restart();
         }
 
+    if(m_scene.tiled() && m_renderer) {
+        m_scene.updateTiles(QSize(m_fbW,m_fbH));
+        m_renderer->syncTiles(m_scene);
+        // 任务完成与过期回收必须继续推进，固定帧率模式由定时器驱动。
+        if(!m_fixedFps) update();
+    }
     if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; return; }
 
     const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()));
@@ -152,7 +159,7 @@ void GLWidget::paintGL() {
     m_shader->setInt("uEnableNormalMap", m_normalMap ? 1 : 0);
     m_shader->setVec4("uFlatColorValue", 1, 1, 1, 1);
     m_renderer->render(*m_shader);
-    m_frameDrawCalls += m_renderer->drawUnitCount();
+    m_frameDrawCalls += m_renderer->visibleDrawCount();
 
     //线框模式 复用已上传VAO 单片状态切换追加三角边 无CPU几何开销
     //深度LEQUAL保证边与已被填充的前表面同深度通过 只描可见三角
@@ -167,7 +174,7 @@ void GLWidget::paintGL() {
         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); //切换线框模式
         gl.glLineWidth(1.0f);
         m_renderer->render(*m_shader);
-        m_frameDrawCalls += m_renderer->drawUnitCount();
+        m_frameDrawCalls += m_renderer->visibleDrawCount();
         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); //切回
         gl.glDepthFunc(GL_LESS); //防闪烁
         }
@@ -509,9 +516,12 @@ void GLWidget::pickAt(const QPoint& pos) {
         m_shader->setFloat("uOutline", 0.0f);
         m_shader->setInt("uFlatColor", 1);
         m_shader->setVec4("uFlatColorValue", 1, 0, 0, 1); //命中=红
+        std::set<int> pickedOwners;
         for (int i = 0; i < subMeshCount(); ++i) {
             if (!m_renderer->subMeshVisible(i)) continue;
-            const int id = i + 1;
+            if (m_scene.tiled() && !pickedOwners.insert(m_mesh.subMeshes[size_t(i)].tileOwner).second) continue;
+            const int representative=m_scene.tileRepresentative(i);
+            const int id = representative + 1;
             m_shader->setVec4("uFlatColorValue", (id & 255) / 255.0f,
                               ((id >> 8) & 255) / 255.0f,
                               ((id >> 16) & 255) / 255.0f, 1.0f);
@@ -535,7 +545,7 @@ void GLWidget::pickAt(const QPoint& pos) {
     }
 
 bool GLWidget::hasModel() const {
-    return m_renderer && !m_renderer->empty();
+    return m_scene.tiled() || (m_renderer && !m_renderer->empty());
     }
 
 bool GLWidget::loadModel(const QString& path) {
@@ -559,9 +569,11 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         return;
         }
     m_scene.setMesh(mesh, m_currentPath);
+    m_tileEdits.clear();
+    if(m_scene.tiled()) { m_pbr=false; m_normalMap=false; }
     if (isValid()) { //context未就绪则留待initializeGL上传
         makeCurrent();
-        m_renderer->upload(m_mesh);
+        if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
         refreshOverlays();
         doneCurrent();
         }
@@ -585,7 +597,7 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
                    .arg((int)m_mesh.subMeshes.size());
     emit modelLoaded(info);
     // GPU 资源已经上传，CPU 侧只保留材质、纹理、包围盒和统计信息。
-    m_mesh.releaseGeometry();
+    if(!m_scene.tiled()) m_mesh.releaseGeometry();
     emit loadFinished();
     update();
     }
@@ -671,17 +683,19 @@ QString GLWidget::subMeshName(int index) const {
     }
 
 bool GLWidget::subMeshVisible(int index) const {
-    return m_renderer && m_renderer->subMeshVisible(index);
+    return m_scene.tiled()?m_scene.tileVisible(index):(m_renderer && m_renderer->subMeshVisible(index));
     }
 
 void GLWidget::setSubMeshVisible(int index, bool visible) {
     if (!m_renderer) return;
-    m_renderer->setSubMeshVisible(index, visible);
+    if(m_scene.tiled()) m_scene.setTileVisible(index,visible);
+    else m_renderer->setSubMeshVisible(index, visible);
     update();
     }
 
 void GLWidget::selectSubMesh(int index) {
     if (index < -1 || index >= subMeshCount()) return;
+    if (m_scene.tiled() && index >= 0 && !m_scene.mesh().subMeshes[size_t(index)].resident) return;
     if (index == m_selectedSubMesh) {
         emit subMeshSelected(index);
         return;
@@ -692,6 +706,11 @@ void GLWidget::selectSubMesh(int index) {
     m_transformScale = QVector3D(1, 1, 1);
     m_undoStack.clear();
     m_redoStack.clear();
+    if(m_scene.tiled() && index>=0) {
+        const int owner=m_mesh.subMeshes[size_t(index)].tileOwner;
+        auto it=m_tileEdits.find(owner);
+        if(it!=m_tileEdits.end()) { m_transformPos=it->second.pos; m_transformRot=it->second.rot; m_transformScale=it->second.scale; }
+    }
     updateModelMatrix();
     emit historyChanged(false, false);
     emit selectionChanged(m_selectedSubMesh >= 0);
@@ -720,8 +739,8 @@ void GLWidget::setShowSelection(bool on) { m_showSelection = on; update(); }
 void GLWidget::setShowAxes(bool on) { m_showAxes = on; update(); }
 void GLWidget::setDepthTest(bool on) { m_depthTest = on; update(); }
 void GLWidget::setFaceCulling(bool on) { m_faceCulling = on; update(); }
-void GLWidget::setPbr(bool on) { m_pbr = on; update(); }
-void GLWidget::setNormalMap(bool on) { m_normalMap = on; update(); }
+void GLWidget::setPbr(bool on) { m_pbr = on && supportsPbr(); update(); }
+void GLWidget::setNormalMap(bool on) { m_normalMap = on && supportsNormalMap(); update(); }
 void GLWidget::setFixedFpsEnabled(bool on) {
     m_fixedFps = on;
     if (m_renderTimer) {
@@ -752,6 +771,13 @@ void GLWidget::updateModelMatrix() {
     m.scale(m_transformScale);
     m.translate(-c);
     m_modelMatrix = m;
+    if(m_scene.tiled()) {
+        if(m_selectedSubMesh>=0) {
+            m_scene.setTileTransform(m_selectedSubMesh,m_modelMatrix);
+            m_tileEdits[m_mesh.subMeshes[size_t(m_selectedSubMesh)].tileOwner]=currentTransform();
+        }
+        return;
+    }
     if (m_renderer) {
         QMatrix4x4 identity;
         identity.setToIdentity();

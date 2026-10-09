@@ -12,6 +12,7 @@
 #include <QTimer>
 #include <cstdint>
 #include <vector>
+#include <map>
 
 class QVulkanInstance;
 class QThread;
@@ -30,6 +31,7 @@ public:
     bool loadModelAsync(const QString& path);
     bool isLoading() const { return m_loading; }
     void modelUploadFinished();
+    void updateTiles();
     void clearModel();
     void resetView();
     void setOrtho(bool enabled);
@@ -116,6 +118,8 @@ private:
     bool m_multisamplingAvailable = false;
     struct Bounds { QVector3D min, max; };
     struct TransformState { QVector3D position; QQuaternion rotation; QVector3D scale{1, 1, 1}; };
+    std::map<int, TransformState> m_tileEdits;
+    void commitTileTransform();
     std::vector<Bounds> m_bounds;
     std::vector<bool> m_visible;
     std::vector<TransformState> m_transforms;

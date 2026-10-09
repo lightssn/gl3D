@@ -20,10 +20,13 @@
 #include <cfloat>
 #include <cmath>
 #include <vector>
+#include <numeric>
+#include <set>
 
 namespace {
 
 struct TextureResource {
+    qint64 cacheKey = 0;
     QImage source;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -33,6 +36,10 @@ struct TextureResource {
 };
 
 struct DrawRange {
+    VkBuffer vertex = VK_NULL_HANDLE, index = VK_NULL_HANDLE;
+    VkDeviceMemory vertexMemory = VK_NULL_HANDLE, indexMemory = VK_NULL_HANDLE;
+    VkDeviceSize vertexBytes = 0, indexBytes = 0;
+    uint64_t revision = 0;
     uint32_t firstIndex = 0, indexCount = 0;
     int32_t vertexOffset = 0;
     QVector3D color{0.7f, 0.7f, 0.7f};
@@ -225,6 +232,7 @@ public:
         destroyBuffer(m_gridBuffer, m_gridMemory);
         destroyModelDescriptors();
         destroyTextures();
+        destroyTileGeometry();
         destroyTexture(m_whiteTexture);
         if (m_descriptorLayout) m_df->vkDestroyDescriptorSetLayout(m_device, m_descriptorLayout, nullptr);
         m_vertexShader = VK_NULL_HANDLE;
@@ -237,7 +245,9 @@ public:
 
     void startNextFrame() override
     {
+        m_window->updateTiles();
         createModelBuffers();
+        if(m_window->scene().tiled()) syncTiles();
         if (m_uniformImageCount && m_uniformImageCount != m_window->swapChainImageCount()) {
             m_df->vkDeviceWaitIdle(m_device);
             destroyModelDescriptors();
@@ -304,10 +314,10 @@ public:
             m_df->vkCmdDraw(cmd, m_gridVertexCount, 1, 0, 0);
             ++drawCalls;
         }
-        if (modelPipeline && m_indexBuffer && m_uniformBuffer && m_window->scene().hasModel()) {
+        if (modelPipeline && (m_indexBuffer || m_window->scene().tiled()) && m_uniformBuffer && m_window->scene().hasModel()) {
             const RenderOptions& options = m_window->scene().options();
             // Qt 已等待当前交换链图像的上一次绘制结束，按图像隔离 UBO 可避免帧间改写。
-            const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() * imageIndex;
+            const VkDeviceSize frameOffset = m_uniformStride * uniformCount() * imageIndex;
             void* mapped = nullptr;
             if (m_df->vkMapMemory(m_device, m_uniformMemory, 0, m_uniformAllocation, 0, &mapped) == VK_SUCCESS) {
                 for (int index = 0; index < m_ranges.size(); ++index) {
@@ -334,25 +344,35 @@ public:
                 qWarning() << "Vulkan uniform buffer mapping failed";
             }
             m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, modelPipeline);
-            m_df->vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertexBuffer, &offset);
-            m_df->vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            if(m_vertexBuffer && m_indexBuffer) {
+                m_df->vkCmdBindVertexBuffers(cmd, 0, 1, &m_vertexBuffer, &offset);
+                m_df->vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            }
             PushConstants constants{};
             m_df->vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                      0, sizeof(constants), &constants);
-            for (int index = 0; index < m_ranges.size(); ++index) {
+            if (m_drawOrderDirty || m_drawOrder.size() != size_t(m_ranges.size())) {
+                m_drawOrder.resize(size_t(m_ranges.size()));
+                std::iota(m_drawOrder.begin(),m_drawOrder.end(),0);
+                std::stable_sort(m_drawOrder.begin(),m_drawOrder.end(),[&](int a,int b){return m_ranges[a].base.source.cacheKey()<m_ranges[b].base.source.cacheKey();});
+                m_drawOrderDirty = false;
+            }
+            for (int index : m_drawOrder) {
                 const DrawRange& range = m_ranges[index];
-                if (!m_window->subMeshVisible(index) || !range.descriptor) continue;
+                if (!m_window->subMeshVisible(index) || !m_window->scene().drawable(index) || !range.descriptor) continue;
                 const uint32_t dynamicOffset = uint32_t(frameOffset + m_uniformStride * index);
                 m_df->vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0,
                                               1, &range.descriptor, 1, &dynamicOffset);
+                bindRange(cmd,range);
                 m_df->vkCmdDrawIndexed(cmd, range.indexCount, 1, range.firstIndex, range.vertexOffset, 0);
                 ++drawCalls;
             }
             const int selected = m_window->selectedSubMesh();
-            if (selected >= 0 && selected < m_ranges.size() && m_window->subMeshVisible(selected) &&
-                options.showSelection && m_ranges[selected].descriptor) {
-                const DrawRange& range = m_ranges[selected];
-                const uint32_t dynamicOffset = uint32_t(frameOffset + m_uniformStride * selected);
+            for(int selectionIndex=0;selectionIndex<m_ranges.size();++selectionIndex) {
+                if(selected<0 || !options.showSelection || !m_window->scene().sameTile(selected,selectionIndex) ||
+                   !m_window->subMeshVisible(selectionIndex) || !m_window->scene().drawable(selectionIndex) || !m_ranges[selectionIndex].descriptor) continue;
+                const DrawRange& range = m_ranges[selectionIndex];
+                const uint32_t dynamicOffset = uint32_t(frameOffset + m_uniformStride * selectionIndex);
                 m_df->vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0,
                                               1, &range.descriptor, 1, &dynamicOffset);
                 if (outlinePipeline && options.outlineWidth > 0.0f) {
@@ -361,7 +381,8 @@ public:
                     m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, outlinePipeline);
                     m_df->vkCmdPushConstants(cmd, m_pipelineLayout,
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(constants), &constants);
-                    m_df->vkCmdDrawIndexed(cmd, range.indexCount, 1, range.firstIndex, range.vertexOffset, 0);
+                    bindRange(cmd,range);
+                m_df->vkCmdDrawIndexed(cmd, range.indexCount, 1, range.firstIndex, range.vertexOffset, 0);
                     ++drawCalls;
                 }
                 constants.mode = 2;
@@ -370,6 +391,7 @@ public:
                                         selectionPipeline ? selectionPipeline : modelPipeline);
                 m_df->vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                          0, sizeof(constants), &constants);
+                bindRange(cmd,range);
                 m_df->vkCmdDrawIndexed(cmd, range.indexCount, 1, range.firstIndex, range.vertexOffset, 0);
                 ++drawCalls;
             }
@@ -416,6 +438,7 @@ public:
         m_df->vkCmdEndRenderPass(cmd);
         m_window->recordFrame(drawCalls);
         m_window->frameReady();
+        if(m_window->scene().tiled() && !m_window->scene().options().fixedFps) m_window->requestUpdate();
     }
 
 private:
@@ -516,6 +539,16 @@ private:
 
     void destroyTexture(TextureResource& texture)
     {
+        if(texture.cacheKey) {
+            auto found=m_sharedTextures.find(texture.cacheKey);
+            if(found!=m_sharedTextures.end()) {
+                if(--found->second.second>0) {
+                    QImage source=texture.source; texture=TextureResource(); texture.source=source; return;
+                }
+                m_sharedTextures.erase(found);
+            }
+            texture.cacheKey=0;
+        }
         if (texture.sampler) m_df->vkDestroySampler(m_device, texture.sampler, nullptr);
         if (texture.view) m_df->vkDestroyImageView(m_device, texture.view, nullptr);
         if (texture.image) m_df->vkDestroyImage(m_device, texture.image, nullptr);
@@ -541,6 +574,7 @@ private:
         if (m_descriptorPool) m_df->vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
         destroyBuffer(m_uniformBuffer, m_uniformMemory);
         m_descriptorPool = VK_NULL_HANDLE;
+        m_tileSets.clear();
         m_uniformAllocation = 0;
         m_uniformImageCount = 0;
         for (DrawRange& range : m_ranges) range.descriptor = VK_NULL_HANDLE;
@@ -549,6 +583,9 @@ private:
     bool createTexture(TextureResource& texture)
     {
         if (texture.source.isNull()) return true;
+        const qint64 key=texture.source.cacheKey();
+        auto cached=m_sharedTextures.find(key);
+        if(cached!=m_sharedTextures.end()) { texture=cached->second.first; ++cached->second.second; return true; }
         QImage image = texture.source.convertToFormat(QImage::Format_RGBA8888);
         std::vector<QImage> levels;
         levels.push_back(image);
@@ -668,13 +705,15 @@ private:
         m_df->vkFreeCommandBuffers(m_device, commandInfo.commandPool, 1, &command);
         destroyBuffer(staging, stagingMemory);
         if (submitResult != VK_SUCCESS) { destroyTexture(texture); return false; }
+        texture.cacheKey=key;
+        m_sharedTextures.emplace(key,std::make_pair(texture,1));
         return true;
     }
 
     bool createModelDescriptors()
     {
         if (m_ranges.isEmpty() || !m_descriptorLayout) return false;
-        const uint32_t count = uint32_t(m_ranges.size());
+        const uint32_t count = uint32_t(uniformCount());
         const int imageCount = m_window->swapChainImageCount();
         if (imageCount <= 0) return false;
         const VkDeviceSize bytes = m_uniformStride * count * imageCount;
@@ -694,7 +733,8 @@ private:
         allocate.descriptorSetCount = count;
         allocate.pSetLayouts = layouts.data();
         if (m_df->vkAllocateDescriptorSets(m_device, &allocate, sets.data()) != VK_SUCCESS) return false;
-        for (uint32_t index = 0; index < count; ++index) {
+        m_tileSets=sets;
+        for (uint32_t index = 0; index < uint32_t(m_ranges.size()); ++index) {
             DrawRange& range = m_ranges[int(index)];
             range.descriptor = sets[index];
             VkDescriptorBufferInfo buffer{m_uniformBuffer, 0, sizeof(DrawUniform)};
@@ -969,7 +1009,7 @@ private:
     {
         if (!m_window->scene().hasModel()) return -1;
         if (!m_pick.pipeline || !m_pick.framebuffer || !m_pick.readback ||
-            !m_vertexBuffer || !m_indexBuffer || !m_uniformBuffer) return -2;
+            (!m_indexBuffer && !m_window->scene().tiled()) || !m_uniformBuffer) return -2;
         const QSize size = m_window->swapChainImageSize();
         if (size.isEmpty()) return -2;
         const int x = std::clamp(int(position.x() * m_window->devicePixelRatio()), 0, size.width() - 1);
@@ -980,7 +1020,7 @@ private:
         pickMatrix(0, 3) = float(size.width() - 2 * x - 1);
         pickMatrix(1, 3) = float(size.height() - 2 * y - 1);
         const RenderFrame frame = makeRenderFrame(m_window->scene(), size);
-        const VkDeviceSize frameOffset = m_uniformStride * m_ranges.size() *
+        const VkDeviceSize frameOffset = m_uniformStride * uniformCount() *
                                           m_window->currentSwapChainImageIndex();
         m_df->vkDeviceWaitIdle(m_device); // 拾取时才等待，避免覆盖尚在使用的动态 UBO。
         void* mapped = nullptr;
@@ -993,7 +1033,7 @@ private:
             DrawUniform uniform{};
             std::memcpy(uniform.mvp, mvp.constData(), sizeof(uniform.mvp));
             std::memcpy(uniform.modelView, modelView.constData(), sizeof(uniform.modelView));
-            uniform.options[3] = float(index + 1); // 0 留给背景。
+            uniform.options[3] = float(m_window->scene().tileRepresentative(index) + 1); // 0 留给背景。
             std::memcpy(static_cast<char*>(mapped) + frameOffset + m_uniformStride * index,
                         &uniform, sizeof(uniform));
         }
@@ -1027,17 +1067,20 @@ private:
         m_df->vkCmdSetViewport(command, 0, 1, &viewport);
         m_df->vkCmdSetScissor(command, 0, 1, &scissor);
         m_df->vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pick.pipeline);
-        m_df->vkCmdBindVertexBuffers(command, 0, 1, &m_vertexBuffer, &offset);
-        m_df->vkCmdBindIndexBuffer(command, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        if(m_vertexBuffer && m_indexBuffer) {
+            m_df->vkCmdBindVertexBuffers(command, 0, 1, &m_vertexBuffer, &offset);
+            m_df->vkCmdBindIndexBuffer(command, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        }
         const PushConstants constants{};
         m_df->vkCmdPushConstants(command, m_pipelineLayout,
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(constants), &constants);
         for (int index = 0; index < m_ranges.size(); ++index) {
             const DrawRange& range = m_ranges[index];
-            if (!range.indexCount || !range.descriptor || !m_window->subMeshVisible(index)) continue;
+            if (!range.indexCount || !range.descriptor || !m_window->subMeshVisible(index) || !m_window->scene().drawable(index)) continue;
             const uint32_t dynamicOffset = uint32_t(frameOffset + m_uniformStride * index);
             m_df->vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout,
                                           0, 1, &range.descriptor, 1, &dynamicOffset);
+            bindRange(command,range);
             m_df->vkCmdDrawIndexed(command, range.indexCount, 1, range.firstIndex, range.vertexOffset, 0);
         }
         m_df->vkCmdEndRenderPass(command);
@@ -1073,12 +1116,90 @@ private:
         return id && id <= uint32_t(m_ranges.size()) ? int(id - 1) : -1;
     }
 
+    size_t uniformCount() const {
+        return m_window->scene().tiled()?m_tileCapacity:size_t(m_ranges.size());
+    }
+
+    void bindRange(VkCommandBuffer cmd,const DrawRange& range) {
+        if(!range.vertex || !range.index) return;
+        const VkDeviceSize offset=0;
+        m_df->vkCmdBindVertexBuffers(cmd,0,1,&range.vertex,&offset);
+        m_df->vkCmdBindIndexBuffer(cmd,range.index,0,VK_INDEX_TYPE_UINT32);
+    }
+
+    void destroyTileGeometry() {
+        for(auto& range:m_ranges) {
+            destroyBuffer(range.vertex,range.vertexMemory);
+            destroyBuffer(range.index,range.indexMemory);
+            range.vertexBytes=range.indexBytes=0;
+        }
+    }
+
+    void writeTileDescriptor(size_t index) {
+        auto& range=m_ranges[int(index)];
+        range.descriptor=m_tileSets[index];
+        VkDescriptorBufferInfo buffer{m_uniformBuffer,0,sizeof(DrawUniform)};
+        TextureResource* textures[]{&range.base,&range.metalRough,&range.normal};
+        VkDescriptorImageInfo images[3]{};
+        VkWriteDescriptorSet writes[4]{};
+        writes[0]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,nullptr,range.descriptor,0,0,1,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,nullptr,&buffer,nullptr};
+        for(uint32_t b=1;b<4;++b) {
+            const auto& texture=textures[b-1]->view?*textures[b-1]:m_whiteTexture;
+            images[b-1]={texture.sampler,texture.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            writes[b]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,nullptr,range.descriptor,b,0,1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,&images[b-1],nullptr,nullptr};
+        }
+        m_df->vkUpdateDescriptorSets(m_device,4,writes,0,nullptr);
+    }
+
+    void syncTiles() {
+        auto& scene=m_window->scene(); auto& mesh=scene.mesh();
+        bool changed=false, waited=false;
+        m_ranges.resize(int(mesh.subMeshes.size()));
+        QElapsedTimer timer; timer.start(); int uploaded=0;
+        if(!m_whiteTexture.view) {
+            m_whiteTexture.source=QImage(1,1,QImage::Format_RGBA8888); m_whiteTexture.source.fill(Qt::white);
+            if(!createTexture(m_whiteTexture)) return;
+        }
+        if(!m_descriptorPool || m_tileCapacity<mesh.subMeshes.size()) {
+            m_df->vkDeviceWaitIdle(m_device); waited=true;
+            destroyModelDescriptors();
+            while(m_tileCapacity<mesh.subMeshes.size()) m_tileCapacity*=2;
+            if(!createModelDescriptors()) return;
+        }
+        for(size_t i=0;i<mesh.subMeshes.size();++i) {
+            const auto& part=mesh.subMeshes[i]; auto& range=m_ranges[int(i)];
+            if(range.revision==part.revision) continue;
+            if(part.resident && (uploaded>=2 || (uploaded && timer.elapsed()>=4))) continue;
+            // 重用旧槽位前等待在途帧，新增槽位无需等待几何缓冲。
+            if(range.vertex || range.index || range.base.view) {
+                if(!waited) { m_df->vkDeviceWaitIdle(m_device); waited=true; }
+                destroyBuffer(range.vertex,range.vertexMemory); destroyBuffer(range.index,range.indexMemory);
+                destroyTexture(range.base); destroyTexture(range.metalRough); destroyTexture(range.normal);
+            }
+            range=DrawRange(); range.revision=part.revision;
+            if(!part.resident) { changed=true; continue; }
+            if(part.vertices.empty() || part.indices.empty()) continue;
+            range.indexCount=uint32_t(part.indices.size()); range.color=part.diffuseColor;
+            if(!createBuffer(part.vertices.size()*sizeof(Vertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,part.vertices.data(),range.vertex,range.vertexMemory,&range.vertexBytes) ||
+               !createBuffer(part.indices.size()*sizeof(unsigned),VK_BUFFER_USAGE_INDEX_BUFFER_BIT,part.indices.data(),range.index,range.indexMemory,&range.indexBytes)) {
+                destroyBuffer(range.vertex,range.vertexMemory); destroyBuffer(range.index,range.indexMemory);
+                range.revision=0; continue;
+            }
+            range.base.source=!part.baseImage.isNull()?part.baseImage:loadTextureImage(part.textureData,part.texturePath,part.flipTextureVertically);
+            if(!createTexture(range.base)) { range.revision=0; continue; }
+            writeTileDescriptor(i); scene.markUploaded(int(i)); ++uploaded; changed=true;
+        }
+        if(changed) { m_drawOrderDirty = true; updateResourceStats(); }
+    }
+
     void createModelBuffers()
     {
         if (!m_df || m_uploadedRevision == m_window->modelRevision()) return;
+        m_drawOrderDirty = true;
         m_df->vkDeviceWaitIdle(m_device);
         destroyModelDescriptors();
         destroyTextures();
+        destroyTileGeometry();
         destroyTexture(m_whiteTexture);
         m_whiteTexture.source = QImage();
         destroyBuffer(m_vertexBuffer, m_vertexMemory);
@@ -1087,6 +1208,7 @@ private:
         m_gridVertexCount = 0;
         m_gridAllocation = 0;
         m_vertexAllocation = m_indexAllocation = 0;
+        destroyTileGeometry();
         m_ranges.clear();
         m_uploadedIndexCount = 0;
         m_uploadedVertexCount = 0;
@@ -1099,6 +1221,11 @@ private:
         }
         const Mesh& mesh = m_window->scene().mesh();
         rebuildGrid();
+        if(m_window->scene().tiled()) {
+            m_uploadedRevision=m_window->modelRevision();
+            m_window->modelUploadFinished();
+            return;
+        }
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
         for (const SubMesh& subMesh : mesh.subMeshes) {
@@ -1154,6 +1281,8 @@ private:
         m_df->vkDeviceWaitIdle(m_device);
         destroyModelDescriptors();
         destroyTextures();
+        destroyTexture(m_whiteTexture);
+        if(!createTexture(m_whiteTexture)) return;
         bool uploaded = true;
         for (DrawRange& range : m_ranges)
             for (TextureResource* texture : {&range.base, &range.metalRough, &range.normal})
@@ -1166,17 +1295,22 @@ private:
 
     void updateResourceStats()
     {
-        qint64 gpu = m_whiteTexture.allocationSize, cpu = 0;
-        int count = m_whiteTexture.view ? 1 : 0;
+        qint64 tileVertex=0,tileIndex=0; int tileBuffers=0;
+        for(const auto& r:m_ranges) { tileVertex+=r.vertexBytes; tileIndex+=r.indexBytes; tileBuffers+=int(bool(r.vertex))+int(bool(r.index)); }
+        qint64 gpu = 0, cpu = 0;
+        int count = 0;
+        std::set<VkImage> images;
+        std::set<qint64> sources;
+        if(m_whiteTexture.view) { images.insert(m_whiteTexture.image); gpu+=m_whiteTexture.allocationSize; ++count; }
         for (const DrawRange& range : m_ranges)
             for (const TextureResource* texture : {&range.base, &range.metalRough, &range.normal}) {
-                if (texture->view) { gpu += texture->allocationSize; ++count; }
-                if (!texture->source.isNull()) cpu += qint64(texture->source.bytesPerLine()) * texture->source.height();
+                if (texture->view && images.insert(texture->image).second) { gpu += texture->allocationSize; ++count; }
+                if (!texture->source.isNull() && sources.insert(texture->source.cacheKey()).second) cpu += texture->source.sizeInBytes();
             }
-        m_window->setResourceStats(m_vertexAllocation + m_uniformAllocation + m_overlayAllocation + m_gridAllocation +
-                                   m_pick.readbackAllocation, m_indexAllocation, gpu, cpu, count,
+        m_window->setResourceStats(tileVertex + m_vertexAllocation + m_uniformAllocation + m_overlayAllocation + m_gridAllocation +
+                                   m_pick.readbackAllocation, tileIndex + m_indexAllocation, gpu, cpu, count,
                                    int(bool(m_vertexBuffer)) + int(bool(m_uniformBuffer)) +
-                                   int(bool(m_overlayBuffer)) + int(bool(m_gridBuffer)) + int(bool(m_pick.readback)));
+                                   int(bool(m_overlayBuffer)) + int(bool(m_gridBuffer)) + int(bool(m_pick.readback)) + tileBuffers);
     }
 
     VkShaderModule createShaderModule(const QByteArray& bytes)
@@ -1403,8 +1537,13 @@ private:
     VkDeviceSize m_uniformAllocation = 0;
     int m_uniformImageCount = 0;
     TextureResource m_whiteTexture;
+    std::map<qint64,std::pair<TextureResource,int>> m_sharedTextures;
     uint64_t m_uploadedTextureRevision = 0;
     QVector<DrawRange> m_ranges;
+    std::vector<int> m_drawOrder;
+    bool m_drawOrderDirty = true;
+    size_t m_tileCapacity=256;
+    std::vector<VkDescriptorSet> m_tileSets;
     uint64_t m_uploadedRevision = 0;
     int m_uploadedIndexCount = 0;
     int m_uploadedVertexCount = 0;
@@ -1489,9 +1628,23 @@ void VulkanWindow::modelUploadFinished()
     emit loadFinished();
 }
 
+void VulkanWindow::updateTiles() {
+    if(!m_scene.tiled()) return;
+    m_scene.updateTiles(swapChainImageSize());
+    const auto& parts=m_scene.mesh().subMeshes;
+    m_transforms.resize(parts.size()); m_bounds.resize(parts.size()); m_visible.resize(parts.size(),true);
+    for(size_t i=0;i<parts.size();++i) {
+        m_bounds[i]={parts[i].boundsMin,parts[i].boundsMax};
+        auto it=m_tileEdits.find(parts[i].tileOwner);
+        m_transforms[i]=it==m_tileEdits.end()?TransformState():it->second;
+    }
+}
+
 void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
 {
     m_scene.setMesh(std::move(mesh), path);
+    m_tileEdits.clear();
+    if(m_scene.tiled()) { m_scene.options().pbr=false; m_scene.options().normalMap=false; }
     m_bounds.clear();
     m_visible.assign(m_scene.mesh().subMeshes.size(), true);
     m_transforms.assign(m_scene.mesh().subMeshes.size(), TransformState());
