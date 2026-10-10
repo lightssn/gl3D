@@ -29,11 +29,13 @@ public:
     bool isReady() const { return m_ready; }
     bool loadModel(const QString& path, QString* error = nullptr);
     bool loadModelAsync(const QString& path);
+    bool loadModelsAsync(const QStringList& paths);
     bool isLoading() const { return m_loading; }
     void modelUploadFinished();
     void updateTiles();
     void clearModel();
     void resetView();
+    void setUpAxis(UpAxis axis) override;
     void setOrtho(bool enabled);
     void setWireframe(bool enabled);
     void setAntialiasing(bool enabled);

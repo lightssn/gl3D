@@ -2,16 +2,24 @@
 #include <cmath>
 #include <algorithm>
 
+void Camera::setUpAxis(UpAxis axis) {
+    if (m_upAxis == axis) return;
+    m_upAxis = axis;
+    m_yaw = 0.6f; m_pitch = 0.35f;
+}
+
 QVector3D Camera::position() const {
     //球坐标→直角坐标 y轴为上
     float cp = std::cos(m_pitch), sp = std::sin(m_pitch);
     float cy = std::cos(m_yaw), sy = std::sin(m_yaw);
-    return m_target + QVector3D(m_distance * cp * sy, m_distance * sp, m_distance * cp * cy);
+    const QVector3D offset(cp * sy, sp, cp * cy);
+    return m_target + m_distance * (m_upAxis == UpAxis::Z
+        ? QVector3D(offset.x(), -offset.z(), offset.y()) : offset);
 }
 
 QMatrix4x4 Camera::viewMatrix() const {
     QMatrix4x4 v;
-    v.lookAt(position(), m_target, QVector3D(0, 1, 0));
+    v.lookAt(position(), m_target, upVector());
     return v;
 }
 
@@ -41,8 +49,9 @@ void Camera::pan(float dx, float dy) {
     //平移速度与距离成正比 远看移动快 近看精细
     float s = m_distance * 0.0018f;
     QVector3D fwd = (m_target - position()).normalized();
-    QVector3D right = QVector3D::crossProduct(fwd, QVector3D(0, 1, 0)).normalized();
-    QVector3D up = QVector3D::crossProduct(right, fwd);
+    QVector3D right = QVector3D::crossProduct(fwd, upVector()).normalized();
+    QVector3D up = m_upAxis == UpAxis::Z ? QVector3D::crossProduct(upVector(), right)
+                                        : QVector3D::crossProduct(right, fwd);
     m_target += right * (-dx * s) + up * (dy * s);
 }
 
@@ -54,8 +63,12 @@ void Camera::zoom(float steps) {
 void Camera::panLocal(float right, float up, float forward) {
     float s = m_distance * 0.03f;
     QVector3D fwd = (m_target - position()).normalized();
-    QVector3D r = QVector3D::crossProduct(fwd, QVector3D(0, 1, 0)).normalized();
+    QVector3D r = QVector3D::crossProduct(fwd, upVector()).normalized();
     QVector3D u = QVector3D::crossProduct(r, fwd);
+    if (m_upAxis == UpAxis::Z) {
+        fwd = QVector3D::crossProduct(upVector(), r);
+        u = upVector();
+    }
     m_target += r * (right * s) + u * (up * s) + fwd * (forward * s);
 }
 

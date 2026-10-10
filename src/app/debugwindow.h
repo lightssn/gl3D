@@ -19,6 +19,7 @@ private:
     QDoubleSpinBox* m_outlineWidth;
     QCheckBox *m_msaa, *m_mipmap, *m_depth, *m_culling, *m_pbr, *m_normalMap, *m_fixedFps;
     QComboBox* m_debugView;
+    QComboBox* m_upAxis;
     QSpinBox* m_fpsSpin;
     int m_subMeshCount = -1;
 };

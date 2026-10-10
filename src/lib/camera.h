@@ -5,8 +5,16 @@
 #include <QVector3D>
 
 //轨道相机 围绕目标点旋转/平移/缩放 鼠标左键旋转 右键平移 滚轮缩放
+enum class UpAxis { Y, Z };
+
 class GL3D_EXPORT Camera {
 public:
+    void setUpAxis(UpAxis axis);
+    UpAxis upAxis() const { return m_upAxis; }
+    QVector3D upVector() const { return m_upAxis == UpAxis::Z ? QVector3D(0,0,1) : QVector3D(0,1,0); }
+    QVector3D groundPoint(float x, float second, float height = 0) const {
+        return m_upAxis == UpAxis::Z ? QVector3D(x,second,height) : QVector3D(x,height,second);
+    }
     QMatrix4x4 viewMatrix() const;
     QMatrix4x4 projMatrix(float aspect) const;
 
@@ -27,6 +35,7 @@ public:
 private:
     QVector3D position() const; //由球坐标还原眼位
 
+    UpAxis m_upAxis = UpAxis::Y;
     QVector3D m_target{0, 0, 0};
     float m_yaw = 0.6f;          //弧度 初始斜视展示立体感
     float m_pitch = 0.35f;

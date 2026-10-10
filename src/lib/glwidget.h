@@ -165,7 +165,9 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
 
         //加载模型文件 成功返回true并发出modelLoaded
         bool loadModel(const QString& path);
+        bool loadModelsAsync(const QStringList& paths);
         void resetView();
+        void setUpAxis(UpAxis axis) override;
         void setClearColor(float r, float g, float b); //主题切换联动视口底色
         bool hasModel() const;
         void deleteModel();          //清除当前模型与选中状态

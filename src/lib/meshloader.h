@@ -3,6 +3,7 @@
 #include "gl3d_export.h"
 #include "mesh.h"
 #include <QString>
+#include <QStringList>
 #include <QObject>
 #include <functional>
 
@@ -10,6 +11,8 @@
 //progress回调0~100进度百分比 可空 加载在调用线程执行(阻塞)
 class GL3D_EXPORT MeshLoader {
 public:
+    static bool loadMany(const QStringList& paths, Mesh& outMesh, QString* err = nullptr,
+                         const std::function<void(int)>& progress = nullptr);
     static bool load(const QString& path, Mesh& outMesh, QString* err = nullptr,
                      const std::function<void(int)>& progress = nullptr);
 
@@ -27,6 +30,7 @@ class GL3D_EXPORT ModelLoaderWorker : public QObject {
     Q_OBJECT
 public slots:
     void load(const QString& path);
+    void loadMany(const QStringList& paths);
 signals:
     void progress(int percent);
     void finished(bool ok, const QString& error, const Mesh& mesh);

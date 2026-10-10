@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "osgbloader.h"
+#include "meshloader.h"
 #include "renderscene.h"
 #include <QTemporaryDir>
 #include <QThread>
@@ -232,4 +233,49 @@ TEST(TileStream, ReloadReusesEvictedSlotWithNewRevision) {
     EXPECT_FALSE(mesh.subMeshes[1].uploaded); EXPECT_TRUE(mesh.subMeshes[0].drawable);
     stream.uploaded(mesh,1); stream.update(mesh,nearCamera,{800,600},-1);
     EXPECT_TRUE(mesh.subMeshes[1].drawable); EXPECT_FALSE(mesh.subMeshes[0].drawable);
+}
+
+
+TEST(Osgb, MultipleFilesPreserveRelativeCoordinatesAndIndependentOwners) {
+    QTemporaryDir dir;
+    osg::ref_ptr<osg::MatrixTransform> first=new osg::MatrixTransform;
+    osg::ref_ptr<osg::MatrixTransform> second=new osg::MatrixTransform;
+    first->setMatrix(osg::Matrixd::translate(10000000,20000000,30000000));
+    second->setMatrix(osg::Matrixd::translate(10000100,20000000,30000000));
+    first->addChild(triangle()); second->addChild(triangle());
+    const QStringList paths{writeNode(dir,"first.osgb",*first),writeNode(dir,"second.osgb",*second)};
+    Mesh mesh; QString error; int percent=0;
+    ASSERT_TRUE(MeshLoader::loadMany(paths,mesh,&error,[&](int value){percent=value;}))<<error.toStdString();
+    EXPECT_EQ(percent,100);
+    RenderScene scene; scene.setMesh(std::move(mesh));
+    ASSERT_EQ(scene.mesh().subMeshes.size(),2);
+    const auto& a=scene.mesh().subMeshes[0]; const auto& b=scene.mesh().subMeshes[1];
+    EXPECT_NE(a.tileOwner,b.tileOwner);
+    EXPECT_NEAR(b.vertices[0].px-a.vertices[0].px,100,0.001);
+    EXPECT_LT(std::abs(a.vertices[0].px),100);
+    QMatrix4x4 edit; edit.translate(4,0,0); scene.setTileTransform(0,edit);
+    EXPECT_EQ(scene.tileTransform(0),edit); EXPECT_EQ(scene.tileTransform(1),QMatrix4x4());
+}
+
+TEST(Osgb, MultipleRootsKeepSeparateRelativePagePaths) {
+    QTemporaryDir first,second; ASSERT_TRUE(pageTree(first)); ASSERT_TRUE(pageTree(second));
+    Mesh mesh;
+    ASSERT_TRUE(MeshLoader::loadMany({first.filePath("root.osgb"),second.filePath("root.osgb")},mesh));
+    ASSERT_EQ(mesh.tileRoot->children.size(),2);
+    EXPECT_NE(mesh.tileRoot->children[0]->children[1]->file,mesh.tileRoot->children[1]->children[1]->file);
+    TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1);
+    ASSERT_EQ(mesh.subMeshes.size(),2); stream.uploaded(mesh,0); stream.uploaded(mesh,1);
+    QElapsedTimer timer; timer.start();
+    while(timer.elapsed()<3000 && mesh.subMeshes.size()<4) {
+        stream.update(mesh,camera,{800,600},-1); QThread::msleep(5);
+    }
+    ASSERT_EQ(mesh.subMeshes.size(),4); EXPECT_EQ(stream.stats().failures,0);
+    std::map<int,int> owners; for(const auto& part:mesh.subMeshes) ++owners[part.tileOwner];
+    ASSERT_EQ(owners.size(),2); for(const auto& owner:owners) EXPECT_EQ(owner.second,2);
+}
+
+TEST(Osgb, RejectsMixedMultipleSelection) {
+    Mesh mesh; QString error;
+    EXPECT_FALSE(MeshLoader::loadMany({"first.osgb","second.obj"},mesh,&error));
+    EXPECT_FALSE(error.isEmpty()); EXPECT_FALSE(mesh.tileRoot);
 }

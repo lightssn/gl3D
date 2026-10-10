@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <cfloat>
+#include <algorithm>
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -49,6 +50,25 @@ bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
     outMesh.bboxMax = mx;
     return true;
     }
+
+bool MeshLoader::loadMany(const QStringList& paths, Mesh& mesh, QString* error,
+    const std::function<void(int)>& progress) {
+    if(paths.size()==1) return load(paths.front(),mesh,error,progress);
+    mesh=Mesh{};
+#if defined(GL3D_HAS_OSGB)
+    if(!paths.isEmpty() && std::all_of(paths.begin(),paths.end(),[](const QString& path) {
+        return QFileInfo(path).suffix().compare("osgb",Qt::CaseInsensitive)==0;
+    })) return OsgbLoader::loadMany(paths,mesh,error,progress);
+#endif
+    if(error) *error=QStringLiteral("Multiple selection supports OSGB files only");
+    return false;
+}
+
+void ModelLoaderWorker::loadMany(const QStringList& paths) {
+    Mesh mesh; QString error;
+    const bool ok=MeshLoader::loadMany(paths,mesh,&error,[this](int percent){ emit progress(percent); });
+    emit finished(ok,error,mesh);
+}
 
 void ModelLoaderWorker::load(const QString& path) {
     Mesh mesh;

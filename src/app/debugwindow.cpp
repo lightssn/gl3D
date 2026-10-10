@@ -78,6 +78,12 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
 
     auto* viewBox = new QGroupBox("调试视图", content); auto* viewLayout = new QGridLayout(viewBox); auto* debugView = new QComboBox(viewBox); debugView->addItems({"光照结果", "法线", "UV"}); viewLayout->addWidget(new QLabel("着色模式", viewBox), 0, 0); viewLayout->addWidget(debugView, 0, 1); connect(debugView, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int mode) { m_renderView->setDebugView(mode); }); layout->addWidget(viewBox);
     m_debugView = debugView;
+    m_upAxis = new QComboBox(viewBox);
+    m_upAxis->addItems({"Y", "Z"});
+    viewLayout->addWidget(new QLabel(QStringLiteral("\u5411\u4e0a\u8f74"), viewBox), 1, 0);
+    viewLayout->addWidget(m_upAxis, 1, 1);
+    connect(m_upAxis, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
+        [this](int index) { m_renderView->setUpAxis(index == 1 ? UpAxis::Z : UpAxis::Y); });
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
 
     auto* resourceBox = new QGroupBox("GPU 对象占用", content); auto* resourceLayout = new QVBoxLayout(resourceBox); resourceLayout->setContentsMargins(5, 8, 5, 5);
@@ -125,6 +131,7 @@ void DebugWindow::setRenderView(RenderView* view) {
     view->setFixedFpsEnabled(m_fixedFps->isChecked());
     view->setTargetFps(m_fpsSpin->value());
     view->setDebugView(m_debugView->currentIndex());
+    { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(view->scene().cameraController().camera().upAxis())); }
     refreshSubMeshes();
     m_pbr->setEnabled(m_renderView->supportsPbr());
     m_normalMap->setEnabled(m_renderView->supportsNormalMap());
@@ -168,6 +175,7 @@ void DebugWindow::setNightMode(bool night) {
 void DebugWindow::refresh() {
     if (!isVisible()) return;
     const DebugSnapshot s = m_renderView->debugSnapshot();
+    { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(m_renderView->scene().cameraController().camera().upAxis())); }
     refreshSubMeshes();
     m_pbr->setEnabled(m_renderView->supportsPbr());
     m_normalMap->setEnabled(m_renderView->supportsNormalMap());

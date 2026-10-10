@@ -295,11 +295,11 @@ void GLWidget::rebuildGrid() {
     float step = 2.0f * ext / lines;
     for (int i = 0; i <= lines; ++i) {
         float p = -ext + i * step;
-        pushLine(verts, QVector3D(-ext, p, eps), QVector3D(ext, p, eps), base);
-        pushLine(verts, QVector3D(p, -ext, eps), QVector3D(p, ext, eps), base);
+        pushLine(verts, m_camera.groundPoint(-ext, p, eps), m_camera.groundPoint(ext, p, eps), base);
+        pushLine(verts, m_camera.groundPoint(p, -ext, eps), m_camera.groundPoint(p, ext, eps), base);
         }
-    pushLine(verts, QVector3D(-ext, 0, eps), QVector3D(ext, 0, eps), strong);
-    pushLine(verts, QVector3D(0, -ext, eps), QVector3D(0, ext, eps), strong);
+    pushLine(verts, m_camera.groundPoint(-ext, 0, eps), m_camera.groundPoint(ext, 0, eps), strong);
+    pushLine(verts, m_camera.groundPoint(0, -ext, eps), m_camera.groundPoint(0, ext, eps), strong);
     uploadOverlay(m_gridMesh, verts);
     }
 
@@ -548,14 +548,16 @@ bool GLWidget::hasModel() const {
     return m_scene.tiled() || (m_renderer && !m_renderer->empty());
     }
 
-bool GLWidget::loadModel(const QString& path) {
+bool GLWidget::loadModel(const QString& path) { return loadModelsAsync({path}); }
+
+bool GLWidget::loadModelsAsync(const QStringList& paths) {
     if (m_loading) return false; //加载进行中 忽略重复请求
     m_loading = true;
-    m_currentPath = path;
+    m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
     emit loadStarted(); //主窗口显示进度条
     //解析交后台线程 完成回调onLoadFinished 不做GPU上传与取景
-    QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection,
-                              Q_ARG(QString, path));
+    QMetaObject::invokeMethod(m_loadWorker, "loadMany", Qt::QueuedConnection,
+                              Q_ARG(QStringList, paths));
     return true;
     }
 
@@ -759,6 +761,13 @@ void GLWidget::setTargetFps(int fps) {
         m_renderTimer->start(interval);
     }
 }
+void GLWidget::setUpAxis(UpAxis axis) {
+    if (m_camera.upAxis() == axis) return;
+    m_camera.setUpAxis(axis);
+    if (isValid()) { makeCurrent(); rebuildGrid(); doneCurrent(); }
+    update();
+}
+
 void GLWidget::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); update(); }
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移

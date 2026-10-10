@@ -3,9 +3,12 @@
 #include "gl3d_export.h"
 #include "tilenode.h"
 #include <atomic>
+#include <functional>
 
 class GL3D_EXPORT OsgbLoader {
 public:
+    static bool loadMany(const QStringList& paths, Mesh& mesh, QString* error,
+        const std::function<void(int)>& progress = {});
     static bool load(const QString& path, Mesh& mesh, QString* error);
     static std::shared_ptr<TileNode> readPage(const QString& path,
         const std::array<double, 16>& transform, const std::array<double, 3>& origin, QString* error,

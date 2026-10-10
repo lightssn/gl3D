@@ -167,9 +167,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     statusBar()->addPermanentWidget(m_backendLabel);
 
     connect(actOpen, &QAction::triggered, this, [this]() {
-        QString path = QFileDialog::getOpenFileName(
-                           this, "选择模型", QString(), "模型文件 (*.stl *.obj *.glb *.osgb);;所有文件 (*)");
-        if (!path.isEmpty()) openModel(path);
+        QStringList paths = QFileDialog::getOpenFileNames(
+                           this, "选择模型", QString(), "模型文件 (*.stl *.obj *.glb *.osgb);;OSGB (*.osgb);;所有文件 (*)");
+        if (!paths.isEmpty()) openModels(paths);
         });
     connect(actReset, &QAction::triggered, this, [this]() { activeView()->resetView(); });
     m_actDebug->setCheckable(true);
@@ -262,16 +262,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     applyTheme(true); // 默认夜间主题
     }
 
-void MainWindow::openModel(const QString& path) {
+void MainWindow::openModel(const QString& path) { openModels({path}); }
+
+void MainWindow::openModels(const QStringList& paths) {
     if (!m_vulkanBackend) {
-        m_glWidget->loadModel(path);
+        m_glWidget->loadModelsAsync(paths);
         return;
     }
 
 #if defined(GL3D_HAS_VULKAN)
-    m_vulkanWindow->loadModelAsync(path);
+    m_vulkanWindow->loadModelsAsync(paths);
 #else
-    Q_UNUSED(path);
+    Q_UNUSED(paths);
 #endif
     }
 

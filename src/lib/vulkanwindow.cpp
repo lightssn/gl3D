@@ -523,13 +523,14 @@ private:
             };
             const float extent = radius * 1.5f;
             const float z = -extent * 0.001f;
+            const auto& camera = m_window->scene().cameraController().camera();
             for (int i = 0; i <= 8; ++i) {
                 const float p = -extent + i * extent * 0.25f;
-                line({-extent, p, z}, {extent, p, z}, base);
-                line({p, -extent, z}, {p, extent, z}, base);
+                line(camera.groundPoint(-extent,p,z), camera.groundPoint(extent,p,z), base);
+                line(camera.groundPoint(p,-extent,z), camera.groundPoint(p,extent,z), base);
             }
-            line({-extent, 0, z}, {extent, 0, z}, base * 1.7f);
-            line({0, -extent, z}, {0, extent, z}, base * 1.7f);
+            line(camera.groundPoint(-extent,0,z), camera.groundPoint(extent,0,z), base * 1.7f);
+            line(camera.groundPoint(0,-extent,z), camera.groundPoint(0,extent,z), base * 1.7f);
             if (createBuffer(vertices.size() * sizeof(OverlayVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                              vertices.data(), m_gridBuffer, m_gridMemory, &m_gridAllocation))
                 m_gridVertexCount = uint32_t(vertices.size());
@@ -1588,7 +1589,9 @@ bool VulkanWindow::loadModel(const QString& path, QString* error)
     return true;
 }
 
-bool VulkanWindow::loadModelAsync(const QString& path)
+bool VulkanWindow::loadModelAsync(const QString& path) { return loadModelsAsync({path}); }
+
+bool VulkanWindow::loadModelsAsync(const QStringList& paths)
 {
     if (m_loading) return false;
     if (!m_loadThread) {
@@ -1613,10 +1616,10 @@ bool VulkanWindow::loadModelAsync(const QString& path)
         });
         m_loadThread->start();
     }
-    m_currentPath = path;
+    m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
     m_loading = true;
     emit loadStarted();
-    QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection, Q_ARG(QString, path));
+    QMetaObject::invokeMethod(m_loadWorker, "loadMany", Qt::QueuedConnection, Q_ARG(QStringList, paths));
     return true;
 }
 
@@ -1626,6 +1629,14 @@ void VulkanWindow::modelUploadFinished()
     m_loading = false;
     emit progressChanged(100);
     emit loadFinished();
+}
+
+void VulkanWindow::setUpAxis(UpAxis axis) {
+    auto& camera = m_scene.cameraController().camera();
+    if (camera.upAxis() == axis) return;
+    camera.setUpAxis(axis);
+    ++m_gridRevision;
+    requestUpdate();
 }
 
 void VulkanWindow::updateTiles() {

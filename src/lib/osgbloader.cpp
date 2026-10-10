@@ -257,24 +257,57 @@ std::shared_ptr<TileNode> OsgbLoader::readPage(const QString& path,
     return root;
 }
 
-bool OsgbLoader::load(const QString& path,Mesh& mesh,QString* error) {
-    auto node=read(path,error); if(!node) return false;
-    Reader reader; reader.origin=osg::Vec3d(node->getBound().center()); reader.directory=QFileInfo(path).absolutePath();
-    auto root=reader.convert(*node,osg::Matrixd::identity(),nullptr,
-        dynamic_cast<osg::LOD*>(node.get()) || dynamic_cast<osg::Geode*>(node.get()) ? 0 : -1);
-    if(root->geometry.empty() && root->children.empty()) {
-        if(error) *error=QStringLiteral("OSGB 没有可渲染的三角网格或分页节点");
-        return false;
+bool OsgbLoader::load(const QString& path, Mesh& mesh, QString* error) {
+    return loadMany({path}, mesh, error);
+}
+
+bool OsgbLoader::loadMany(const QStringList& paths, Mesh& mesh, QString* error,
+    const std::function<void(int)>& progress) {
+    if (paths.isEmpty()) { if(error) *error="No OSGB files selected"; return false; }
+    std::vector<osg::ref_ptr<osg::Node>> nodes;
+    osg::Vec3d minimum, maximum;
+    for (const auto& path : paths) {
+        auto node=read(path,error); if(!node) return false;
+        const auto bound=node->getBound();
+        const osg::Vec3d center(bound.center());
+        const double radius=std::max(0.0,double(bound.radius()));
+        for (int k=0;k<3;++k) {
+            minimum[k]=nodes.empty()?center[k]-radius:std::min(minimum[k],center[k]-radius);
+            maximum[k]=nodes.empty()?center[k]+radius:std::max(maximum[k],center[k]+radius);
+        }
+        nodes.push_back(node);
+        if(progress) progress(int(nodes.size()*50/paths.size()));
     }
-    root->name=QFileInfo(path).fileName();
-    std::function<void(const std::shared_ptr<TileNode>&)> traceRoot = [&](const auto& n) {
-        n->ancestry.append(QDir::cleanPath(QFileInfo(path).absoluteFilePath()));
-        for (auto& child : n->children) traceRoot(child);
-    };
-    traceRoot(root);
-    mesh.tileRoot=root;
+    Reader reader; reader.origin=(minimum+maximum)*0.5;
+    auto aggregate=std::make_shared<TileNode>();
+    aggregate->name=QStringLiteral("OSGB (%1 files)").arg(paths.size());
+    aggregate->radius=float((maximum-minimum).length()*0.5);
+    for (qsizetype i=0;i<paths.size();++i) {
+        const auto& path=paths[i]; const auto& node=nodes[size_t(i)];
+        reader.directory=QFileInfo(path).absolutePath();
+        reader.decodedImages.clear();
+        const int owner=dynamic_cast<osg::LOD*>(node.get()) || dynamic_cast<osg::Geode*>(node.get())
+            ? reader.ownerCounter++ : -1;
+        auto root=reader.convert(*node,osg::Matrixd::identity(),nullptr,owner);
+        if(!root || (root->geometry.empty() && root->children.empty())) {
+            if(error) *error=QStringLiteral("OSGB contains no supported mesh or pages: %1").arg(path);
+            return false;
+        }
+        root->name=QFileInfo(path).fileName();
+        std::function<void(const std::shared_ptr<TileNode>&)> traceRoot=[&](const auto& n) {
+            n->ancestry.append(QDir::cleanPath(QFileInfo(path).absoluteFilePath()));
+            for(auto& child:n->children) traceRoot(child);
+        };
+        traceRoot(root);
+        aggregate->children.push_back(root);
+        if(progress) progress(50+int((i+1)*50/paths.size()));
+    }
+    Mesh result;
+    result.tileRoot=paths.size()==1?aggregate->children.front():aggregate;
+    const auto& root=result.tileRoot;
     const QVector3D extent(root->radius,root->radius,root->radius);
-    mesh.bboxMin=root->center-extent; mesh.bboxMax=root->center+extent;
-    if(reader.unsupported) qWarning() << "OSGB: custom shader/vertex color/transparency is not reproduced";
+    result.bboxMin=root->center-extent; result.bboxMax=root->center+extent;
+    mesh=std::move(result);
+    if(reader.unsupported) qWarning()<<"OSGB: custom shader/vertex color/transparency is not reproduced";
     return true;
 }

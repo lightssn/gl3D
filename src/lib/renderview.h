@@ -18,6 +18,7 @@ public:
     virtual const RenderScene& scene() const = 0;
     virtual DebugSnapshot debugSnapshot() = 0;
     virtual void resetView() = 0;
+    virtual void setUpAxis(UpAxis axis) = 0;
     virtual void setOrtho(bool enabled) = 0;
     virtual void setWireframe(bool enabled) = 0;
     virtual void setAntialiasing(bool enabled) = 0;

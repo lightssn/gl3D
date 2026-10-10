@@ -70,6 +70,7 @@ void RenderScene::setMesh(Mesh mesh, const QString& path)
         mesh.tileRoot = clone(mesh.tileRoot);
     }
     m_mesh = std::move(mesh);
+    m_cameraController.camera().setUpAxis(m_mesh.tileRoot ? UpAxis::Z : UpAxis::Y);
     if(m_mesh.tileRoot) m_stream=std::make_unique<TileStream>(m_mesh);
     refreshTileRepresentatives();
     m_sourcePath = path;

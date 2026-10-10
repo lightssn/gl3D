@@ -72,4 +72,5 @@ public:
 
     // 打开并加载模型 供CLI参数调用
     void openModel(const QString& path);
+    void openModels(const QStringList& paths);
 };
