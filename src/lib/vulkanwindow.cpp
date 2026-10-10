@@ -54,8 +54,9 @@ struct alignas(16) DrawUniform {
     float baseMetal[4];
     float materialFlags[4];
     float options[4];
+    float tileTint[4];
 };
-static_assert(sizeof(DrawUniform) == 176, "Vulkan UBO must match std140 layout");
+static_assert(sizeof(DrawUniform) == 192, "Vulkan UBO must match std140 layout");
 struct PushConstants { int mode = 0; float outline = 0.0f; };
 struct OverlayVertex { float position[3]; float color[3]; };
 struct SingleSampleTarget {
@@ -336,6 +337,9 @@ public:
                     uniform.options[0] = options.pbr ? 1.0f : 0.0f;
                     uniform.options[1] = options.normalMap ? 1.0f : 0.0f;
                     uniform.options[2] = float(options.debugView);
+                    const QVector4D tint=m_window->scene().tileTint(index);
+                    uniform.tileTint[0]=tint.x(); uniform.tileTint[1]=tint.y();
+                    uniform.tileTint[2]=tint.z(); uniform.tileTint[3]=tint.w();
                     std::memcpy(static_cast<char*>(mapped) + frameOffset + m_uniformStride * index,
                                 &uniform, sizeof(uniform));
                 }
@@ -1675,7 +1679,7 @@ void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
     m_undo.clear();
     m_redo.clear();
     m_pendingPick = QPoint(-1, -1);
-    m_scene.options().outlineWidth = m_scene.mesh().radius() * 0.005f;
+    m_scene.options().outlineWidth = RenderOptions{}.outlineWidth;
     emit selectionChanged(false);
     emit historyChanged(false, false);
     ++m_modelRevision;

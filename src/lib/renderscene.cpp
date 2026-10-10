@@ -117,3 +117,16 @@ void RenderScene::resetView()
     if (hasModel())
         m_cameraController.camera().fitToSphere(m_mesh.center(), m_mesh.radius());
 }
+
+QVector3D RenderScene::tileLevelColor(int level) {
+    // Fixed L0..L5 palette remains stable as deeper pages are discovered.
+    const float t=std::clamp(level/5.f,0.f,1.f);
+    const QVector3D green(0.65f,1.f,0.65f), yellow(1.f,1.f,0.65f), red(1.f,0.65f,0.65f);
+    return t<=0.5f ? green*(1-2*t)+yellow*(2*t) : yellow*(2-2*t)+red*(2*t-1);
+}
+QVector4D RenderScene::tileTint(int slot) const {
+    if(!m_stream || !m_options.tileLevelTint || slot<0 || slot>=int(m_mesh.subMeshes.size())) return {};
+    const auto& part=m_mesh.subMeshes[size_t(slot)];
+    if(!part.resident || part.tileLevel<0) return {};
+    return QVector4D(tileLevelColor(part.tileLevel),0.45f);
+}

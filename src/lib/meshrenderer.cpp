@@ -237,6 +237,7 @@ void MeshRenderer::syncTiles(RenderScene& scene) {
                 current.compiled=true; scene.markUploaded(int(i));
             }
         }
+        current.tileTint=scene.tileTint(int(i));
         m_owners[i]=part.tileOwner;
         m_visible[i]=scene.tileVisible(int(i));
         m_drawable[i]=scene.drawable(int(i)) && m_units[i].revision==part.revision && m_units[i].compiled;
@@ -262,6 +263,7 @@ void MeshRenderer::render(Shader& shader, int onlyIndex) {
         shader.setMat4("uModel", m_transforms[i].constData());
         shader.setInt("uUseTexture", u.texture ? 1 : 0);
         shader.setVec3("uDiffuse", u.kd[0], u.kd[1], u.kd[2]);
+        shader.setVec4("uTileTint",u.tileTint.x(),u.tileTint.y(),u.tileTint.z(),u.tileTint.w());
         shader.setFloat("uMetallic", u.metallic);
         shader.setFloat("uRoughness", u.roughness);
         shader.setInt("uUseMetallicRoughness", u.metallicRoughnessTexture ? 1 : 0);

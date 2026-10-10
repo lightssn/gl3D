@@ -33,6 +33,7 @@ out vec4 FragColor;
 
 uniform sampler2D uTexture; //纹理，glGenTextures / glBindTexture / glTexImage2D创建
 uniform int uUseTexture; //纹理开关
+uniform vec4 uTileTint; // RGB overlay, A blend strength
 uniform vec3 uDiffuse; //纯色底色
 uniform int uFlatColor; //纯色开关
 uniform vec4 uFlatColorValue; //含alpha纯色值
@@ -106,7 +107,7 @@ void main() {
         float diff = abs(dot(n, light)) * 0.75; //旧版漫反射
         vec3 h = normalize(light + vec3(0.0, 0.0, 1.0));
         float spec = pow(max(abs(dot(n, h)), 0.0), 32.0) * 0.25;
-        FragColor = vec4(base * (0.30 + diff) + vec3(spec), 1.0);
+        FragColor = vec4(mix(base * (0.30 + diff) + vec3(spec), uTileTint.rgb, uTileTint.a), 1.0);
         return;
     }
 
@@ -127,5 +128,5 @@ void main() {
     vec3 specular = numerator / max(4.0 * nDotV * nDotL, 0.0001);
     vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base / 3.14159265;
     vec3 color = (diffuse + specular) * nDotL * 3.0 + base * 0.03;
-    FragColor = vec4(linearToSrgb(color), 1.0);
+    FragColor = vec4(mix(linearToSrgb(color), uTileTint.rgb, uTileTint.a), 1.0);
 }

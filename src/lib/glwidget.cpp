@@ -580,7 +580,7 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         doneCurrent();
         }
     m_camera.fitToSphere(m_mesh.center(), m_mesh.radius());
-    m_outlineWidth = m_mesh.radius() * 0.02f;
+    m_outlineWidth = RenderOptions{}.outlineWidth;
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);

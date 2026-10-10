@@ -3,6 +3,11 @@
 #include "meshloader.h"
 #include "renderscene.h"
 #include <QTemporaryDir>
+#include <QProcess>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QFile>
 #include <QThread>
 #include <QElapsedTimer>
 #include <QThreadPool>
@@ -201,6 +206,10 @@ TEST(TileStream, PixelLodKeepsCoarseUntilDetailReady) {
     ASSERT_TRUE(waitPage(stream,mesh,camera)); EXPECT_TRUE(mesh.subMeshes[0].drawable);
     stream.uploaded(mesh,1); stream.update(mesh,camera,{800,600},-1);
     EXPECT_TRUE(mesh.subMeshes[1].drawable); EXPECT_FALSE(mesh.subMeshes[0].drawable);
+    EXPECT_TRUE(stream.levels()[1].pixelRange);
+    stream.setLevel(1,true,100000,1000000,true);
+    stream.update(mesh,camera,{800,600},-1);
+    EXPECT_TRUE(mesh.subMeshes[0].drawable); EXPECT_FALSE(mesh.subMeshes[1].drawable);
 }
 
 TEST(Osgb, SceneCopiesDoNotConsumeSharedSourceTree) {
@@ -233,6 +242,18 @@ TEST(TileStream, ReloadReusesEvictedSlotWithNewRevision) {
     EXPECT_FALSE(mesh.subMeshes[1].uploaded); EXPECT_TRUE(mesh.subMeshes[0].drawable);
     stream.uploaded(mesh,1); stream.update(mesh,nearCamera,{800,600},-1);
     EXPECT_TRUE(mesh.subMeshes[1].drawable); EXPECT_FALSE(mesh.subMeshes[0].drawable);
+    for(int cycle=0;cycle<3;++cycle) {
+        const auto previous=mesh.subMeshes[1].revision;
+        QThread::msleep(2); stream.update(mesh,farCamera,{800,600},-1);
+        ASSERT_FALSE(mesh.subMeshes[1].resident);
+        timer.restart();
+        while(timer.elapsed()<3000 && !mesh.subMeshes[1].resident) {
+            stream.update(mesh,nearCamera,{800,600},-1); QThread::msleep(5);
+        }
+        ASSERT_TRUE(mesh.subMeshes[1].resident); EXPECT_GT(mesh.subMeshes[1].revision,previous);
+        stream.uploaded(mesh,1); stream.update(mesh,nearCamera,{800,600},-1);
+        EXPECT_TRUE(mesh.subMeshes[1].drawable); EXPECT_FALSE(mesh.subMeshes[0].drawable);
+    }
 }
 
 
@@ -278,4 +299,135 @@ TEST(Osgb, RejectsMixedMultipleSelection) {
     Mesh mesh; QString error;
     EXPECT_FALSE(MeshLoader::loadMany({"first.osgb","second.obj"},mesh,&error));
     EXPECT_FALSE(error.isEmpty()); EXPECT_FALSE(mesh.tileRoot);
+}
+
+
+TEST(Osgb, IndexBuilderFindsRootsSkipsEmptyAndKeepsPagePaths) {
+    for(bool forest:{false,true}) {
+        QTemporaryDir dataDir,outputDir;
+        ASSERT_TRUE(pageTree(dataDir));
+        osg::ref_ptr<osg::Group> empty=new osg::Group; writeNode(dataDir,"empty.osgb",*empty);
+        if(forest) writeNode(dataDir,"independent.osgb",*triangle());
+        const QString output=outputDir.filePath("index.osgb");
+        QString program=QCoreApplication::applicationDirPath()+"/gl3d_osgb_index";
+#ifdef Q_OS_WIN
+        program+=".exe";
+#endif
+        QProcess process; process.start(program,{dataDir.path(),output,"--same-directory"});
+        ASSERT_TRUE(process.waitForFinished(15000));
+        ASSERT_EQ(process.exitStatus(),QProcess::NormalExit);
+        ASSERT_EQ(process.exitCode(),0)<<process.readAllStandardError().constData();
+        QFile report(output+".json"); ASSERT_TRUE(report.open(QIODevice::ReadOnly));
+        const auto json=QJsonDocument::fromJson(report.readAll()).object();
+        EXPECT_EQ(json["roots"].toArray().size(),forest?2:1);
+        EXPECT_EQ(json["emptyFiles"].toArray().size(),1);
+        EXPECT_TRUE(json["missingPages"].toArray().isEmpty());
+        // Stage the portable entry beside its tiles, then move the complete directory.
+        ASSERT_TRUE(QFile::copy(output,dataDir.filePath("index.osgb")));
+        const QString moved=outputDir.filePath("moved");
+        ASSERT_TRUE(QDir().rename(dataDir.path(),moved));
+        Mesh mesh; ASSERT_TRUE(OsgbLoader::load(moved+"/index.osgb",mesh,nullptr));
+        if(!forest) EXPECT_TRUE(mesh.tileRoot->lod);
+        TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1);
+        const size_t initial=mesh.subMeshes.size();
+        for(size_t i=0;i<initial;++i) stream.uploaded(mesh,int(i));
+        QElapsedTimer timer; timer.start();
+        while(timer.elapsed()<3000 && mesh.subMeshes.size()==initial) {
+            stream.update(mesh,camera,{800,600},-1); QThread::msleep(5);
+        }
+        EXPECT_GT(mesh.subMeshes.size(),initial); EXPECT_EQ(stream.stats().failures,0);
+    }
+}
+
+TEST(TileStream, LevelRangesAndVisibilityControlSelection) {
+    QTemporaryDir dir; Mesh mesh; mesh.tileRoot=pageTree(dir);
+    TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1);
+    stream.uploaded(mesh,0);
+    ASSERT_EQ(stream.levels().size(),2);
+    EXPECT_FLOAT_EQ(stream.levels()[1].maxRange,10);
+    ASSERT_TRUE(waitPage(stream,mesh,camera)); stream.uploaded(mesh,1);
+    stream.update(mesh,camera,{800,600},-1);
+    EXPECT_TRUE(mesh.subMeshes[1].drawable); EXPECT_FALSE(mesh.subMeshes[0].drawable);
+    stream.setLevel(1,false,0,10,false);
+    stream.update(mesh,camera,{800,600},-1);
+    EXPECT_FALSE(mesh.subMeshes[1].drawable); EXPECT_TRUE(mesh.subMeshes[0].drawable);
+    stream.setLevel(0,false,10,1000000,false);
+    stream.update(mesh,camera,{800,600},-1);
+    EXPECT_FALSE(mesh.subMeshes[0].drawable); EXPECT_FALSE(mesh.subMeshes[1].drawable);
+    stream.resetLevels();
+    stream.setLevel(1,true,0,0.1f,true);
+    stream.update(mesh,camera,{800,600},-1);
+    EXPECT_TRUE(mesh.subMeshes[0].drawable); EXPECT_FALSE(mesh.subMeshes[1].drawable);
+    stream.resetLevels(); stream.update(mesh,camera,{800,600},-1);
+    EXPECT_TRUE(mesh.subMeshes[1].drawable);
+    EXPECT_FALSE(stream.levels()[1].overridden);
+}
+
+TEST(TileStream, HiddenIntermediateLevelStillPagesFinerLevel) {
+    QTemporaryDir dir;
+    writeNode(dir,"finest.osgb",*triangle());
+    osg::ref_ptr<osg::PagedLOD> middle=new osg::PagedLOD;
+    middle->setCenterMode(osg::LOD::USER_DEFINED_CENTER); middle->setCenter({0,0,0}); middle->setRadius(2);
+    middle->addChild(triangle(),5,1000000);
+    middle->setFileName(1,"finest.osgb"); middle->setRange(1,0,5);
+    Mesh mesh; mesh.tileRoot=pageTree(dir);
+    writeNode(dir,"detail.osgb",*middle);
+    TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1); stream.uploaded(mesh,0);
+    stream.setLevel(1,false,0,10,false);
+    QElapsedTimer timer; timer.start();
+    while(timer.elapsed()<3000 && mesh.subMeshes.size()<3) {
+        stream.update(mesh,camera,{800,600},-1);
+        for(int i=0;i<int(mesh.subMeshes.size());++i) if(!mesh.subMeshes[size_t(i)].uploaded) stream.uploaded(mesh,i);
+        QThread::msleep(5);
+    }
+    ASSERT_EQ(mesh.subMeshes.size(),3); ASSERT_EQ(stream.levels().size(),3);
+    stream.update(mesh,camera,{800,600},-1);
+    EXPECT_FALSE(mesh.subMeshes[1].drawable); EXPECT_TRUE(mesh.subMeshes[2].drawable);
+    EXPECT_FALSE(stream.levels()[1].enabled);
+}
+
+TEST(TileStream, RequiredPageSurvivesBudgetPressureBeforeGpuUpload) {
+    QTemporaryDir dir; Mesh mesh;
+    auto page=pageTree(dir);
+    mesh.tileRoot=std::make_shared<TileNode>(); mesh.tileRoot->children.push_back(page);
+    // Keep traversal busy after the requested page to cross millisecond ticks.
+    for(int i=0;i<15000;++i) mesh.tileRoot->children.push_back(std::make_shared<TileNode>());
+    TileStream stream(mesh); stream.budgetBytes=0; stream.expireMs=0;
+    Camera camera; camera.fitToSphere({0,0,0},1); stream.uploaded(mesh,0);
+    QElapsedTimer timer; timer.start();
+    while(timer.elapsed()<3000 && mesh.subMeshes.size()<2) {
+        stream.update(mesh,camera,{800,600},-1); QThread::msleep(2);
+    }
+    ASSERT_GE(mesh.subMeshes.size(),2);
+    ASSERT_TRUE(mesh.subMeshes[1].resident);
+    const auto revision=mesh.subMeshes[1].revision;
+    for(int i=0;i<5;++i) {
+        QThread::msleep(2); stream.update(mesh,camera,{800,600},-1);
+        EXPECT_TRUE(mesh.subMeshes[1].resident);
+        EXPECT_EQ(mesh.subMeshes[1].revision,revision);
+    }
+    stream.uploaded(mesh,1); stream.update(mesh,camera,{800,600},-1);
+    EXPECT_TRUE(mesh.subMeshes[1].drawable);
+    EXPECT_EQ(stream.stats().evicted,0);
+}
+
+TEST(Osgb, LevelTintUsesStableSharedPaletteAndStreamedGeometryLevel) {
+    EXPECT_EQ(RenderScene::tileLevelColor(0),QVector3D(0.65f,1.f,0.65f));
+    EXPECT_EQ(RenderScene::tileLevelColor(5),QVector3D(1.f,0.65f,0.65f));
+    EXPECT_EQ(RenderScene::tileLevelColor(9),RenderScene::tileLevelColor(5));
+    QTemporaryDir dir; Mesh mesh; mesh.tileRoot=pageTree(dir);
+    RenderScene scene; scene.setMesh(std::move(mesh));
+    EXPECT_EQ(scene.mesh().subMeshes[0].tileLevel,0);
+    EXPECT_EQ(scene.tileTint(0),QVector4D());
+    scene.options().tileLevelTint=true;
+    EXPECT_EQ(scene.tileTint(0),QVector4D(RenderScene::tileLevelColor(0),0.45f));
+    scene.markUploaded(0);
+    QElapsedTimer timer; timer.start();
+    while(timer.elapsed()<3000 && scene.mesh().subMeshes.size()<2) {
+        scene.updateTiles({800,600}); QThread::msleep(5);
+    }
+    ASSERT_EQ(scene.mesh().subMeshes.size(),2);
+    EXPECT_EQ(scene.mesh().subMeshes[1].tileLevel,1);
+    EXPECT_EQ(scene.tileTint(1),QVector4D(RenderScene::tileLevelColor(1),0.45f));
+    scene.options().tileLevelTint=false; EXPECT_EQ(scene.tileTint(1),QVector4D());
 }

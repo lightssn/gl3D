@@ -6,6 +6,7 @@ layout(set = 0, binding = 0) uniform DrawParams {
     vec4 baseMetal;
     vec4 materialFlags;
     vec4 options;
+    vec4 tileTint;
 } params;
 layout(set = 0, binding = 1) uniform sampler2D baseTexture;
 layout(set = 0, binding = 2) uniform sampler2D metalRoughTexture;
@@ -62,7 +63,7 @@ void main() {
     if (params.options.x < 0.5) {
         float diffuse = abs(dot(n, light)) * 0.75;
         float specular = pow(max(abs(dot(n, light)), 0.0), 32.0) * 0.25;
-        outColor = vec4(base * (0.30 + diffuse) + vec3(specular), 1.0);
+        outColor = vec4(mix(base * (0.30 + diffuse) + vec3(specular), params.tileTint.rgb, params.tileTint.a), 1.0);
         return;
     }
     if (params.materialFlags.y > 0.5) base = srgbToLinear(base);
@@ -84,5 +85,5 @@ void main() {
                     max(4.0 * ndv * ndl, 0.0001);
     vec3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * base / 3.14159265;
     vec3 color = (diffuse + specular) * ndl * 3.0 + base * 0.03;
-    outColor = vec4(linearToSrgb(color), 1.0);
+    outColor = vec4(mix(linearToSrgb(color), params.tileTint.rgb, params.tileTint.a), 1.0);
 }

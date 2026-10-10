@@ -36,6 +36,7 @@ target_link_libraries(gl3d_test PRIVATE
 )
 if(GL3D_ENABLE_OSGB)
     target_sources(gl3d_test PRIVATE test_osgb.cpp)
+    add_dependencies(gl3d_test gl3d_osgb_index)
     target_link_libraries(gl3d_test PRIVATE unofficial::osg::osgDB unofficial::osg::osg)
     gl3d_deploy_osg(gl3d_test)
 endif()

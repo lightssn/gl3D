@@ -6,6 +6,7 @@ layout(set = 0, binding = 0) uniform DrawParams {
     vec4 baseMetal;
     vec4 materialFlags;
     vec4 options;
+    vec4 tileTint;
 } params;
 layout(push_constant) uniform DrawMode { int mode; float outline; } drawMode;
 layout(location = 0) in vec3 inPosition;

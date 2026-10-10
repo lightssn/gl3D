@@ -5,6 +5,7 @@
 #include <vector>
 #include <QImage>
 #include <QMatrix4x4>
+#include <QVector4D>
 #include <map>
 
 class Shader;
@@ -44,6 +45,7 @@ private:
         QImage textureImage, metallicRoughnessImage, normalImage;
         float kd[3] = {0.7f, 0.7f, 0.7f};
         float metallic = 0.0f, roughness = 1.0f;
+        QVector4D tileTint;
         uint64_t revision = 0;
         size_t vertexUploaded = 0, indexUploaded = 0;
         bool compiled = true;

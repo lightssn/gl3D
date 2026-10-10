@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         Shader shader;
         if(!shader.loadFromSource(
             "#version 450 core\nlayout(location=0) in vec3 p; uniform mat4 uModel; void main(){gl_Position=uModel*vec4(p,1);}",
-            "#version 450 core\nuniform sampler2D uTexture; uniform int uUseTexture; uniform vec3 uDiffuse; out vec4 c; void main(){c=uUseTexture!=0?texture(uTexture,vec2(0.5)):vec4(uDiffuse,1);}")) result=3;
+            "#version 450 core\nuniform sampler2D uTexture; uniform int uUseTexture; uniform vec3 uDiffuse; uniform vec4 uTileTint; out vec4 c; void main(){vec3 base=uUseTexture!=0?texture(uTexture,vec2(0.5)).rgb:uDiffuse; c=vec4(mix(base,uTileTint.rgb,uTileTint.a),1);}")) result=3;
         QOpenGLFramebufferObject fbo(64,64);
         fbo.bind(); gl.glViewport(0,0,64,64); gl.glClearColor(0,0,0,1); gl.glClear(GL_COLOR_BUFFER_BIT);
         shader.bind(); renderer.render(shader,0); shader.unbind();
@@ -54,6 +54,17 @@ int main(int argc, char** argv) {
         if(pixels.pixelColor(16,32).red()<200 || pixels.pixelColor(48,32).red()<200) {
             qCritical()<<"Tile material group/texture rendering failed"; result=4;
         }
+        scene.mesh().subMeshes[1].tileLevel=5;
+        scene.options().tileLevelTint=true; renderer.syncTiles(scene);
+        gl.glClear(GL_COLOR_BUFFER_BIT); shader.bind(); renderer.render(shader); shader.unbind();
+        const QImage tinted=fbo.toImage();
+        if(tinted.pixelColor(16,32).green()<100 ||
+           tinted.pixelColor(16,32).green()-tinted.pixelColor(48,32).green()<30) {
+            qCritical()<<"Shared L0/L5 tint uniforms failed"; result=7;
+        }
+        scene.options().tileLevelTint=false; renderer.syncTiles(scene);
+        gl.glClear(GL_COLOR_BUFFER_BIT); shader.bind(); renderer.render(shader); shader.unbind();
+        if(fbo.toImage().pixelColor(16,32).green()>5) { qCritical()<<"Tint toggle did not restore texture"; result=8; }
         renderer.setMipmapsEnabled(true);
         renderer.setMipmapsEnabled(false);
         renderer.clear();

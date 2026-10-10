@@ -12,6 +12,8 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPainter>
+#include <QPushButton>
+#include <QScrollArea>
 #include <QPolygonF>
 #include <QSignalBlocker>
 #include <QScreen>
@@ -86,6 +88,23 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
         [this](int index) { m_renderView->setUpAxis(index == 1 ? UpAxis::Z : UpAxis::Y); });
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
 
+    auto* levelsBox = new QGroupBox(QStringLiteral("\u91d1\u5b57\u5854\u5c42\u7ea7\uff08\u5df2\u53d1\u73b0\uff09"), content);
+    auto* levelsLayout = new QVBoxLayout(levelsBox);
+    auto* levelsHint = new QLabel(QStringLiteral("\u7ec6\u5c42\u968f\u5206\u9875\u52a0\u8f7d\u9010\u6b65\u53d1\u73b0\u3002L0 \u6700\u7c97\uff1b\u8ddd\u79bb\u4f7f\u7528\u6a21\u578b\u5355\u4f4d\uff0c\u50cf\u7d20 LOD \u4f7f\u7528 px\u3002\n\u53d6\u6d88\u52fe\u9009\u9690\u85cf\u8be5\u5c42\uff0c\u4ecd\u53ef\u8bbf\u95ee\u66f4\u7ec6\u5c42\u3002"), levelsBox);
+    levelsHint->setWordWrap(true); levelsLayout->addWidget(levelsHint);
+    m_levelTint = new QCheckBox(QStringLiteral("\u6309\u5c42\u7ea7\u53e0\u52a0\u534a\u900f\u660e\u989c\u8272"),levelsBox);
+    connect(m_levelTint,&QCheckBox::toggled,this,[this](bool enabled) { m_renderView->scene().options().tileLevelTint=enabled; });
+    levelsLayout->addWidget(m_levelTint);
+    m_levels = new QTableWidget(0,3,levelsBox);
+    m_levels->setHorizontalHeaderLabels({QStringLiteral("\u5c42\u7ea7"),QStringLiteral("\u6700\u8fd1"),QStringLiteral("\u6700\u8fdc")});
+    m_levels->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_levels->verticalHeader()->hide(); m_levels->setMinimumHeight(110); m_levels->setMaximumHeight(210);
+    m_levels->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    levelsLayout->addWidget(m_levels);
+    auto* resetLevels = new QPushButton(QStringLiteral("\u6062\u590d\u539f\u59cb LOD \u8bbe\u7f6e"),levelsBox);
+    connect(resetLevels,&QPushButton::clicked,this,[this] { m_renderView->scene().resetTileLevels(); refreshTileLevels(); });
+    levelsLayout->addWidget(resetLevels); layout->addWidget(levelsBox);
+
     auto* resourceBox = new QGroupBox("GPU 对象占用", content); auto* resourceLayout = new QVBoxLayout(resourceBox); resourceLayout->setContentsMargins(5, 8, 5, 5);
     m_resources = new QTableWidget(4, 5, resourceBox); m_resources->setHorizontalHeaderLabels({"VAO", "VBO", "EBO", "纹理", "FBO"}); m_resources->setVerticalHeaderLabels({"数量", "内存", "显存", "总计"}); m_resources->setSpan(3, 0, 1, 5); m_resources->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); m_resources->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed); m_resources->setEditTriggers(QAbstractItemView::NoEditTriggers); m_resources->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_resources->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_resources->setFocusPolicy(Qt::NoFocus); m_resources->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
     for (int row = 0; row < m_resources->rowCount(); ++row) m_resources->setRowHeight(row, 25);
@@ -103,7 +122,7 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
         });
     subMeshLayout->addWidget(m_subMeshes);
     layout->addWidget(subMeshBox);
-    layout->addStretch(1); m_driverLabel = new QLabel(content); m_driverLabel->setWordWrap(true); layout->addWidget(m_driverLabel); root->addWidget(content, 1);
+    layout->addStretch(1); m_driverLabel = new QLabel(content); m_driverLabel->setWordWrap(true); layout->addWidget(m_driverLabel); auto* scroll = new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame); scroll->setWidget(content); root->addWidget(scroll, 1);
     m_timer = new QTimer(this); connect(m_timer, &QTimer::timeout, this, &DebugWindow::refresh); m_timer->start(250); hide();
 }
 
@@ -133,6 +152,7 @@ void DebugWindow::setRenderView(RenderView* view) {
     view->setDebugView(m_debugView->currentIndex());
     { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(view->scene().cameraController().camera().upAxis())); }
     refreshSubMeshes();
+    refreshTileLevels();
     m_pbr->setEnabled(m_renderView->supportsPbr());
     m_normalMap->setEnabled(m_renderView->supportsNormalMap());
     m_pbr->setToolTip(m_renderView->supportsPbr()?QString():QStringLiteral("OSGB 基础材质未提供 PBR 数据"));
@@ -145,6 +165,7 @@ void DebugWindow::setRenderView(RenderView* view) {
 void DebugWindow::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     refreshSubMeshes();
+    refreshTileLevels();
     m_pbr->setEnabled(m_renderView->supportsPbr());
     m_normalMap->setEnabled(m_renderView->supportsNormalMap());
     m_pbr->setToolTip(m_renderView->supportsPbr()?QString():QStringLiteral("OSGB 基础材质未提供 PBR 数据"));
@@ -177,6 +198,7 @@ void DebugWindow::refresh() {
     const DebugSnapshot s = m_renderView->debugSnapshot();
     { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(m_renderView->scene().cameraController().camera().upAxis())); }
     refreshSubMeshes();
+    refreshTileLevels();
     m_pbr->setEnabled(m_renderView->supportsPbr());
     m_normalMap->setEnabled(m_renderView->supportsNormalMap());
     m_pbr->setToolTip(m_renderView->supportsPbr()?QString():QStringLiteral("OSGB 基础材质未提供 PBR 数据"));
@@ -258,3 +280,57 @@ void DebugWindow::refreshSubMeshes() {
     if (selected >= 0 && selected < count)
         m_subMeshes->setCurrentRow(selected);
     }
+
+void DebugWindow::applyTileLevel(int row,bool overrideRange) {
+    auto* enabled=qobject_cast<QCheckBox*>(m_levels->cellWidget(row,0));
+    auto* minimum=qobject_cast<QDoubleSpinBox*>(m_levels->cellWidget(row,1));
+    auto* maximum=qobject_cast<QDoubleSpinBox*>(m_levels->cellWidget(row,2));
+    const auto levels=m_renderView->scene().tileLevels();
+    if(!enabled || !minimum || !maximum || row>=int(levels.size())) return;
+    const auto& setting=levels[size_t(row)];
+    // Merely focusing a field must not replace authored ranges with their summary.
+    if(overrideRange && std::abs(minimum->value()-setting.minRange)<0.0051 &&
+       std::abs(maximum->value()-std::min(1e30,double(setting.maxRange)))<0.0051) return;
+    if(!overrideRange) {
+        m_renderView->scene().setTileLevel(row,enabled->isChecked(),setting.minRange,setting.maxRange,setting.overridden);
+        return;
+    }
+    const float high=maximum->value()>=1e30 ? std::numeric_limits<float>::max() : float(maximum->value());
+    if(minimum->value()>=high) { refreshTileLevels(); return; }
+    m_renderView->scene().setTileLevel(row,enabled->isChecked(),float(minimum->value()),high,overrideRange || levels[size_t(row)].overridden);
+}
+
+void DebugWindow::refreshTileLevels() {
+    const auto levels=m_renderView->scene().tileLevels();
+    m_levels->setEnabled(!levels.empty());
+    m_levelTint->setEnabled(!levels.empty());
+    { QSignalBlocker block(m_levelTint); m_levelTint->setChecked(m_renderView->scene().options().tileLevelTint); }
+    if(m_levels->rowCount()>int(levels.size())) m_levels->setRowCount(int(levels.size()));
+    while(m_levels->rowCount()<int(levels.size())) {
+        const int row=m_levels->rowCount(); m_levels->insertRow(row);
+        auto* enabled=new QCheckBox(QString("L%1").arg(row),m_levels);
+        m_levels->setCellWidget(row,0,enabled);
+        connect(enabled,&QCheckBox::toggled,this,[this,row] { applyTileLevel(row,false); });
+        for(int column:{1,2}) {
+            auto* spin=new QDoubleSpinBox(m_levels); spin->setRange(0,1e30); spin->setDecimals(2); spin->setSingleStep(100);
+            spin->setKeyboardTracking(false); spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+            spin->setToolTip(QStringLiteral("\u6700\u8fdc 1e30 \u8868\u793a\u65e0\u9650\uff1b\u8303\u56f4\u4e3a [\u6700\u8fd1, \u6700\u8fdc)\u3002"));
+            m_levels->setCellWidget(row,column,spin);
+            connect(spin,&QDoubleSpinBox::editingFinished,this,[this,row] { applyTileLevel(row,true); });
+        }
+
+    }
+    for(int row=0;row<int(levels.size());++row) {
+        const auto& setting=levels[size_t(row)];
+        auto* enabled=qobject_cast<QCheckBox*>(m_levels->cellWidget(row,0));
+        QSignalBlocker blocker(enabled); enabled->setChecked(setting.enabled);
+        enabled->setToolTip(setting.overridden?QStringLiteral("\u81ea\u5b9a\u4e49\u8303\u56f4"):QStringLiteral("\u6587\u4ef6\u539f\u59cb\u8303\u56f4"));
+        for(int column:{1,2}) {
+            auto* spin=qobject_cast<QDoubleSpinBox*>(m_levels->cellWidget(row,column));
+            if(!spin->hasFocus()) { QSignalBlocker block(spin); spin->setValue(std::min(1e30,double(column==1?setting.minRange:setting.maxRange))); }
+        }
+        const auto color=RenderScene::tileLevelColor(row);
+        const QColor swatch=QColor::fromRgbF(color.x(),color.y(),color.z());
+        enabled->setStyleSheet(QString("QCheckBox { color: %1; }").arg(swatch.name()));
+    }
+}

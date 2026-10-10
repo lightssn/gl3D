@@ -23,6 +23,7 @@ struct Vertex {
 struct SubMesh {
     QVector3D boundsMin, boundsMax;
     int tileOwner = -1;
+    int tileLevel = -1;
     uint64_t revision = 0;
     int savedVertices = 0, savedTriangles = 0;
     qint64 residentBytes = 0;

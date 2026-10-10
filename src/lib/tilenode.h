@@ -21,8 +21,10 @@ struct TileNode {
     bool lod = false, pixelRange = false, external = false;
     bool loaded = true, loading = false, failed = false;
     int owner = -1;
+    int level = 0;
     std::vector<SubMesh> geometry;
     std::vector<std::shared_ptr<TileNode>> children;
     std::vector<int> renderSlots;
     qint64 lastUsed = 0, retryAfter = 0;
+    uint64_t lastVisitedFrame = 0;
 };

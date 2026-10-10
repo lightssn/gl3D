@@ -54,6 +54,7 @@ endif()
 
 add_subdirectory(src/lib)
 add_subdirectory(src/app)
+add_subdirectory(tools)
 
 include(CTest)
 if(BUILD_TESTING)

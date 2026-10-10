@@ -24,11 +24,16 @@ public:
     void updateTiles(const QSize& viewport);
     void markUploaded(int slot);
     bool drawable(int slot) const;
+    static QVector3D tileLevelColor(int level);
+    QVector4D tileTint(int slot) const;
     bool tileVisible(int slot) const;
     void setTileVisible(int slot, bool visible);
     QMatrix4x4 tileTransform(int slot) const;
     void setTileTransform(int slot, const QMatrix4x4& matrix);
     TileStats tileStats() const { return m_stream ? m_stream->stats() : TileStats(); }
+    std::vector<TileLevelSettings> tileLevels() const { return m_stream ? m_stream->levels() : std::vector<TileLevelSettings>(); }
+    void setTileLevel(int level, bool enabled, float minimum, float maximum, bool overrideRange) { if(m_stream) m_stream->setLevel(level,enabled,minimum,maximum,overrideRange); }
+    void resetTileLevels() { if(m_stream) m_stream->resetLevels(); }
     const QString& sourcePath() const { return m_sourcePath; }
     Mesh& mesh() { return m_mesh; }
     const Mesh& mesh() const { return m_mesh; }

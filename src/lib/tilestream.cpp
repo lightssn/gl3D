@@ -11,6 +11,7 @@
 
 TileStream::TileStream(Mesh& mesh) : m_root(mesh.tileRoot) {
     m_clock.start();
+    discover(m_root,0);
     install(mesh, m_root, -1);
 }
 TileStream::~TileStream() { m_cancel->store(true); }
@@ -21,6 +22,54 @@ void TileStream::setTransform(int owner,const QMatrix4x4& matrix) { if(owner>=0)
 QVector3D TileStream::center(int owner) const { auto it=m_centers.find(owner); return it==m_centers.end()?QVector3D():it->second; }
 bool TileStream::visible(int owner) const { auto it=m_visibility.find(owner); return it==m_visibility.end() || it->second; }
 void TileStream::setVisible(int owner,bool value) { m_visibility[owner]=value; }
+
+// Levels follow LOD alternatives and external page boundaries, not Group depth.
+void TileStream::discover(const std::shared_ptr<TileNode>& node,int level) {
+    node->level=level;
+    if(int(m_levels.size())<=level) m_levels.resize(size_t(level+1));
+    for(size_t i=0;i<node->children.size();++i) {
+        const auto& child=node->children[i];
+        const int childLevel=level+(node->lod?int(i):(child->external?1:0));
+        discover(child,childLevel);
+        if(node->lod && (i>0 || level==0)) {
+            auto& setting=m_levels[size_t(childLevel)];
+            if(!setting.discovered) {
+                setting.defaultMin=child->minRange; setting.defaultMax=child->maxRange;
+                setting.pixelRange=node->pixelRange; setting.discovered=true;
+            } else {
+                setting.defaultMin=std::min(setting.defaultMin,child->minRange);
+                setting.defaultMax=std::max(setting.defaultMax,child->maxRange);
+            }
+            if(!setting.overridden) { setting.minRange=setting.defaultMin; setting.maxRange=setting.defaultMax; }
+        }
+    }
+}
+void TileStream::setLevel(int level,bool enabled,float minimum,float maximum,bool overrideRange) {
+    if(level<0 || level>=int(m_levels.size()) || !std::isfinite(minimum) || !std::isfinite(maximum) || minimum<0 || maximum<=minimum) return;
+    auto& setting=m_levels[size_t(level)]; setting.enabled=enabled; setting.overridden=overrideRange;
+    setting.minRange=overrideRange?minimum:setting.defaultMin;
+    setting.maxRange=overrideRange?maximum:setting.defaultMax;
+}
+void TileStream::resetLevels() {
+    for(auto& setting:m_levels) {
+        setting.enabled=true; setting.overridden=false;
+        setting.minRange=setting.defaultMin; setting.maxRange=setting.defaultMax;
+    }
+}
+bool TileStream::levelEnabled(int level) const { return m_levels[size_t(level)].enabled; }
+std::pair<float,float> TileStream::range(const std::shared_ptr<TileNode>& parent,size_t index) const {
+    const auto& child=parent->children[index];
+    const auto& setting=m_levels[size_t(child->level)];
+    if(setting.overridden && (index>0 || parent->level==0)) return {setting.minRange,setting.maxRange};
+    // Changing a finer tier also moves its coarse sibling's shared boundary.
+    if(index==0 && parent->children.size()==2) {
+        const auto& fine=m_levels[size_t(parent->children[1]->level)];
+        if(fine.overridden) return parent->pixelRange
+            ? std::make_pair(child->minRange,fine.minRange)
+            : std::make_pair(fine.maxRange,child->maxRange);
+    }
+    return {child->minRange,child->maxRange};
+}
 
 bool TileStream::sphereVisible(const QMatrix4x4& clip,const QVector3D& center,float radius) {
     for(int axis=0;axis<3;++axis) for(int sign:{-1,1}) {
@@ -39,7 +88,7 @@ void TileStream::install(Mesh& mesh,const std::shared_ptr<TileNode>& node,int in
         int slot;
         if(m_freeSlots.empty()) { slot=int(mesh.subMeshes.size()); mesh.subMeshes.emplace_back(); }
         else { slot=m_freeSlots.back(); m_freeSlots.pop_back(); }
-        part.tileOwner=owner;
+        part.tileOwner=owner; part.tileLevel=node->level;
         part.savedVertices=int(part.vertices.size()); part.savedTriangles=int(part.indices.size()/3);
         part.residentBytes=qint64(part.vertices.size()*sizeof(Vertex)+part.indices.size()*sizeof(unsigned));
         // 包含解码纹理的估算；不是驱动的实际分配值。
@@ -57,11 +106,15 @@ void TileStream::uploaded(Mesh& mesh,int slot) {
     auto& part=mesh.subMeshes[size_t(slot)]; part.uploaded=true;
     std::vector<Vertex>().swap(part.vertices); std::vector<unsigned>().swap(part.indices);
 }
+bool TileStream::hasEnabledGeometry(const std::shared_ptr<TileNode>& node) const {
+    if(!node->renderSlots.empty() && levelEnabled(node->level)) return true;
+    return std::any_of(node->children.begin(),node->children.end(),[&](const auto& child) { return hasEnabledGeometry(child); });
+}
 bool TileStream::ready(const std::shared_ptr<TileNode>& node,const Mesh& mesh) const {
-    if(!node->loaded) return false;
+    if(!node->loaded || (!node->renderSlots.empty() && !hasEnabledGeometry(node))) return false;
     for(int s:node->renderSlots) if(!mesh.subMeshes[size_t(s)].uploaded) return false;
-    if(!node->renderSlots.empty()) return true;
-    if(node->children.empty()) return true;
+    if(!node->renderSlots.empty() && levelEnabled(node->level)) return true;
+    if(node->children.empty()) return node->renderSlots.empty() || levelEnabled(node->level);
     // LOD 只需要有一层可用，普通 Group 的兄弟必须全部准备好。
     if(node->lod) return std::any_of(node->children.begin(),node->children.end(),[&](const auto& c){return ready(c,mesh);});
     return std::all_of(node->children.begin(),node->children.end(),[&](const auto& c){return ready(c,mesh);});
@@ -80,18 +133,20 @@ void TileStream::visit(Mesh& mesh,const std::shared_ptr<TileNode>& node,
     const float pixels=camera.ortho()?radius*2*viewport.height()/std::max(camera.distance(),0.001f)
         :radius*viewport.height()/(std::tan(camera.fov()*0.0087266463f)*distance);
     node->lastUsed=m_clock.elapsed();
+    node->lastVisitedFrame=m_frame;
     if(!node->loaded) {
         if(!node->loading && node->retryAfter<=m_clock.elapsed()) m_requests.push_back({node,pixels});
         return;
     }
-    for(int s:node->renderSlots) if(!requestOnly && mesh.subMeshes[size_t(s)].uploaded) mesh.subMeshes[size_t(s)].drawable=true;
+    for(int s:node->renderSlots) if(!requestOnly && levelEnabled(node->level) && mesh.subMeshes[size_t(s)].uploaded) mesh.subMeshes[size_t(s)].drawable=true;
     if(!node->lod) { for(auto& child:node->children) visit(mesh,child,camera,viewport,clip,requestOnly); return; }
     const float metric=node->pixelRange?pixels:distance;
     bool missing=false,matched=false;
     std::set<size_t> draw;
     for(size_t i=0;i<node->children.size();++i) {
         auto& child=node->children[i];
-        if(metric<child->minRange || metric>=child->maxRange) continue;
+        const auto bounds=range(node,i);
+        if(metric<bounds.first || metric>=bounds.second) continue;
         matched=true;
         if(ready(child,mesh)) draw.insert(i);
         else {
@@ -103,8 +158,8 @@ void TileStream::visit(Mesh& mesh,const std::shared_ptr<TileNode>& node,
         // 请求层尚未上传时保留最近的已驻留层，避免空洞。
         float best=std::numeric_limits<float>::max(); size_t fallback=node->children.size();
         for(size_t i=0;i<node->children.size();++i) if(ready(node->children[i],mesh)) {
-            const auto& cnode=node->children[i];
-            float gap=metric<cnode->minRange?cnode->minRange-metric:std::max(0.f,metric-cnode->maxRange);
+            const auto bounds=range(node,i);
+            float gap=metric<bounds.first?bounds.first-metric:std::max(0.f,metric-bounds.second);
             if(gap<best) { best=gap; fallback=i; }
         }
         if(fallback<node->children.size()) draw.insert(fallback);
@@ -125,6 +180,7 @@ void TileStream::release(Mesh& mesh,const std::shared_ptr<TileNode>& node) {
 }
 
 void TileStream::update(Mesh& mesh,const Camera& camera,const QSize& viewport,int selected) {
+    ++m_frame;
     for(auto& part:mesh.subMeshes) part.drawable=false;
     for(auto it=m_jobs.begin();it!=m_jobs.end();) {
         if(it->result.wait_for(std::chrono::seconds(0))!=std::future_status::ready) { ++it; continue; }
@@ -141,6 +197,7 @@ void TileStream::update(Mesh& mesh,const Camera& camera,const QSize& viewport,in
                 for(auto& c:n->children) trace(c);
             };
             for(auto& c:target->children) trace(c);
+            discover(target,target->level);
             install(mesh,target,target->owner);
         } else {
             target->failed=true; target->retryAfter=m_clock.elapsed()+5000;
@@ -163,11 +220,12 @@ void TileStream::update(Mesh& mesh,const Camera& camera,const QSize& viewport,in
     std::sort(cached.begin(),cached.end(),[](const auto& a,const auto& b){return a.used<b.used;});
     for(auto& c:cached) {
         auto n=c.node;
-        if(!n->loaded || n->loading || n->owner==selectedOwner || n->lastUsed==m_clock.elapsed()) continue;
+        if(!n->loaded || n->loading || n->owner==selectedOwner || n->lastVisitedFrame==m_frame) continue;
         // 帧内已使用的子层也会保护其外部祖先。
         bool active=false;
         std::function<void(const std::shared_ptr<TileNode>&)> check=[&](const auto& p) {
-            if(p->loading) active=true;
+            // Request-only pages still need time for incremental GPU uploads.
+            if(p->loading || p->lastVisitedFrame==m_frame) active=true;
             for(int s:p->renderSlots) if(mesh.subMeshes[size_t(s)].drawable) active=true;
             for(auto& child:p->children) check(child);
         }; check(n);
