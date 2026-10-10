@@ -9,6 +9,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QPainter>
@@ -282,7 +283,7 @@ void DebugWindow::refreshSubMeshes() {
     }
 
 void DebugWindow::applyTileLevel(int row,bool overrideRange) {
-    auto* enabled=qobject_cast<QCheckBox*>(m_levels->cellWidget(row,0));
+    auto* enabled=m_levels->cellWidget(row,0)->findChild<QCheckBox*>();
     auto* minimum=qobject_cast<QDoubleSpinBox*>(m_levels->cellWidget(row,1));
     auto* maximum=qobject_cast<QDoubleSpinBox*>(m_levels->cellWidget(row,2));
     const auto levels=m_renderView->scene().tileLevels();
@@ -308,8 +309,15 @@ void DebugWindow::refreshTileLevels() {
     if(m_levels->rowCount()>int(levels.size())) m_levels->setRowCount(int(levels.size()));
     while(m_levels->rowCount()<int(levels.size())) {
         const int row=m_levels->rowCount(); m_levels->insertRow(row);
-        auto* enabled=new QCheckBox(QString("L%1").arg(row),m_levels);
-        m_levels->setCellWidget(row,0,enabled);
+        auto* cell=new QWidget(m_levels);
+        auto* cellLayout=new QHBoxLayout(cell); cellLayout->setContentsMargins(4,0,4,0); cellLayout->setSpacing(6);
+        auto* enabled=new QCheckBox(QString("L%1").arg(row),cell);
+        auto* swatch=new QLabel(cell); swatch->setFixedSize(12,12);
+        const auto color=RenderScene::tileLevelColor(row);
+        const QColor fill=QColor::fromRgbF(color.x(),color.y(),color.z());
+        swatch->setStyleSheet(QString("background-color: %1; border: 1px solid #687583;").arg(fill.name()));
+        cellLayout->addWidget(enabled); cellLayout->addWidget(swatch); cellLayout->addStretch();
+        m_levels->setCellWidget(row,0,cell);
         connect(enabled,&QCheckBox::toggled,this,[this,row] { applyTileLevel(row,false); });
         for(int column:{1,2}) {
             auto* spin=new QDoubleSpinBox(m_levels); spin->setRange(0,1e30); spin->setDecimals(2); spin->setSingleStep(100);
@@ -322,15 +330,12 @@ void DebugWindow::refreshTileLevels() {
     }
     for(int row=0;row<int(levels.size());++row) {
         const auto& setting=levels[size_t(row)];
-        auto* enabled=qobject_cast<QCheckBox*>(m_levels->cellWidget(row,0));
+        auto* enabled=m_levels->cellWidget(row,0)->findChild<QCheckBox*>();
         QSignalBlocker blocker(enabled); enabled->setChecked(setting.enabled);
         enabled->setToolTip(setting.overridden?QStringLiteral("\u81ea\u5b9a\u4e49\u8303\u56f4"):QStringLiteral("\u6587\u4ef6\u539f\u59cb\u8303\u56f4"));
         for(int column:{1,2}) {
             auto* spin=qobject_cast<QDoubleSpinBox*>(m_levels->cellWidget(row,column));
             if(!spin->hasFocus()) { QSignalBlocker block(spin); spin->setValue(std::min(1e30,double(column==1?setting.minRange:setting.maxRange))); }
         }
-        const auto color=RenderScene::tileLevelColor(row);
-        const QColor swatch=QColor::fromRgbF(color.x(),color.y(),color.z());
-        enabled->setStyleSheet(QString("QCheckBox { color: %1; }").arg(swatch.name()));
     }
 }
