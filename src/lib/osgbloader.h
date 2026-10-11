@@ -14,5 +14,5 @@ public:
         const std::array<double, 16>& transform, const std::array<double, 3>& origin, QString* error,
         std::shared_ptr<std::atomic_bool> cancel = {},
         const QVector3D& inheritedDiffuse = QVector3D(0.7f, 0.7f, 0.7f),
-        const QImage& inheritedImage = {});
+        const QImage& inheritedImage = {}, std::shared_ptr<PageMemory> memory = {});
 };

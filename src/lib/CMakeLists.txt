@@ -5,6 +5,8 @@ add_library(gl3d_core SHARED
     tilestream.cpp
     glcontext.h
     debugstats.h
+    processmemory.h
+    processmemory.cpp
     renderoptions.h
     cameracontroller.h
     selectioncontroller.h

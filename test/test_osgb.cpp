@@ -2,6 +2,7 @@
 #include "osgbloader.h"
 #include "meshloader.h"
 #include "renderscene.h"
+#include "processmemory.h"
 #include <QTemporaryDir>
 #include <QProcess>
 #include <QJsonDocument>
@@ -11,6 +12,7 @@
 #include <QThread>
 #include <QElapsedTimer>
 #include <QThreadPool>
+#include <cmath>
 #include <osgDB/WriteFile>
 #include <osgDB/Registry>
 #include <QCoreApplication>
@@ -120,7 +122,7 @@ TEST(TileStream, KeepsCoarseUntilDetailUploadedAndEvictsUnusedPage) {
     EXPECT_FALSE(mesh.subMeshes[1].uploaded);
     stream.uploaded(mesh,1); stream.update(mesh,camera,{800,600},-1);
     EXPECT_FALSE(mesh.subMeshes[0].drawable); EXPECT_TRUE(mesh.subMeshes[1].drawable);
-    stream.expireMs=0; camera.zoom(-20); QThread::msleep(2);
+    stream.budgetEviction=true; stream.budgetBytes=0; camera.zoom(-20); QThread::msleep(2);
     stream.update(mesh,camera,{800,600},-1);
     EXPECT_TRUE(mesh.subMeshes[0].drawable); EXPECT_FALSE(mesh.subMeshes[1].resident);
     EXPECT_GE(stream.stats().evicted,1);
@@ -230,7 +232,7 @@ TEST(TileStream, ReloadReusesEvictedSlotWithNewRevision) {
     stream.uploaded(mesh,0); ASSERT_TRUE(waitPage(stream,mesh,nearCamera));
     const auto revision=mesh.subMeshes[1].revision;
     stream.uploaded(mesh,1); stream.update(mesh,nearCamera,{800,600},-1);
-    Camera farCamera=nearCamera; farCamera.zoom(-20); stream.expireMs=0;
+    Camera farCamera=nearCamera; farCamera.zoom(-20); stream.budgetEviction=true; stream.budgetBytes=0;
     QThread::msleep(2); stream.update(mesh,farCamera,{800,600},-1);
     ASSERT_FALSE(mesh.subMeshes[1].resident);
     QElapsedTimer timer; timer.start();
@@ -392,7 +394,7 @@ TEST(TileStream, RequiredPageSurvivesBudgetPressureBeforeGpuUpload) {
     mesh.tileRoot=std::make_shared<TileNode>(); mesh.tileRoot->children.push_back(page);
     // Keep traversal busy after the requested page to cross millisecond ticks.
     for(int i=0;i<15000;++i) mesh.tileRoot->children.push_back(std::make_shared<TileNode>());
-    TileStream stream(mesh); stream.budgetBytes=0; stream.expireMs=0;
+    TileStream stream(mesh); stream.budgetBytes=0; stream.budgetEviction=true;
     Camera camera; camera.fitToSphere({0,0,0},1); stream.uploaded(mesh,0);
     QElapsedTimer timer; timer.start();
     while(timer.elapsed()<3000 && mesh.subMeshes.size()<2) {
@@ -430,4 +432,149 @@ TEST(Osgb, LevelTintUsesStableSharedPaletteAndStreamedGeometryLevel) {
     EXPECT_EQ(scene.mesh().subMeshes[1].tileLevel,1);
     EXPECT_EQ(scene.tileTint(1),QVector4D(RenderScene::tileLevelColor(1),0.45f));
     scene.options().tileLevelTint=false; EXPECT_EQ(scene.tileTint(1),QVector4D());
+}
+
+namespace {
+struct BlockPageWorkers {
+    QThreadPool* pool=QThreadPool::globalInstance();
+    int previous=pool->maxThreadCount();
+    std::promise<void> release, started;
+    BlockPageWorkers() {
+        pool->waitForDone(); pool->setMaxThreadCount(1);
+        auto gate=release.get_future().share();
+        pool->start([this,gate] { started.set_value(); gate.wait(); });
+        started.get_future().wait();
+    }
+    ~BlockPageWorkers() { release.set_value(); pool->waitForDone(); pool->setMaxThreadCount(previous); }
+};
+std::vector<std::shared_ptr<TileNode>> focusPages(const QTemporaryDir& dir,Mesh& mesh,const Camera& camera) {
+    auto source=pageTree(dir)->children[1];
+    mesh.tileRoot=std::make_shared<TileNode>();
+    const QVector3D right=camera.viewMatrix().row(0).toVector3D();
+    const float halfWidth=camera.distance()*std::tan(camera.fov()*0.0087266463f);
+    for(float offset:{0.9f,0.7f,0.5f,0.3f,0.1f,0.f}) {
+        auto page=std::make_shared<TileNode>(*source); page->radius=0.01f;
+        page->center=camera.target()+right*halfWidth*offset;
+        mesh.tileRoot->children.push_back(page);
+    }
+    return mesh.tileRoot->children;
+}
+}
+TEST(TileStream, FourJobsPrioritizeScreenCenterAndRebuildPendingQueue) {
+    QTemporaryDir dir; Mesh mesh; Camera camera; camera.fitToSphere({0,0,0},1);
+    auto pages=focusPages(dir,mesh,camera);
+    BlockPageWorkers workers;
+    TileStream stream(mesh); stream.update(mesh,camera,{600,600},-1);
+    EXPECT_EQ(stream.stats().loading,4); EXPECT_EQ(stream.stats().queued,2);
+    for(int i=0;i<6;++i) EXPECT_EQ(pages[size_t(i)]->loading,i>=2);
+    // Pan far enough to move every original page out of the frustum.
+    Camera moved=camera; moved.panLocal(100,0,0);
+    stream.update(mesh,moved,{600,600},-1);
+    EXPECT_EQ(stream.stats().queued,0);
+}
+TEST(TileStream, OffscreenCompletedResultsAreDiscardedWithoutFailureAndCanReload) {
+    QTemporaryDir dir; Mesh mesh; Camera camera; camera.fitToSphere({0,0,0},1);
+    auto pages=focusPages(dir,mesh,camera);
+    TileStream stream(mesh); stream.update(mesh,camera,{600,600},-1);
+    QThreadPool::globalInstance()->waitForDone();
+    Camera moved=camera; moved.panLocal(100,0,0);
+    stream.update(mesh,moved,{600,600},-1);
+    EXPECT_TRUE(mesh.subMeshes.empty()); EXPECT_EQ(stream.stats().loading,0);
+    EXPECT_EQ(stream.stats().failures,0); EXPECT_EQ(stream.stats().queued,0);
+    for(auto& page:pages) { EXPECT_FALSE(page->loading); EXPECT_FALSE(page->loaded); EXPECT_FALSE(page->failed); }
+    stream.update(mesh,camera,{600,600},-1);
+    EXPECT_EQ(stream.stats().loading,4);
+    QThreadPool::globalInstance()->waitForDone(); stream.update(mesh,camera,{600,600},-1);
+    EXPECT_GE(mesh.subMeshes.size(),4); EXPECT_EQ(stream.stats().failures,0);
+}
+
+TEST(TileStream, DefaultCacheRetainsPagesUntilBudgetEvictionIsEnabled) {
+    QTemporaryDir dir; Mesh mesh; mesh.tileRoot=pageTree(dir);
+    TileStream stream(mesh); EXPECT_EQ(stream.budgetBytes,1024ll*1024*1024); EXPECT_FALSE(stream.budgetEviction);
+    Camera near; near.fitToSphere({0,0,0},1); stream.uploaded(mesh,0);
+    ASSERT_TRUE(waitPage(stream,mesh,near)); stream.uploaded(mesh,1);
+    Camera far=near; far.zoom(-20); stream.budgetBytes=0;
+    for(int frame=0;frame<5;++frame) { QThread::msleep(2); stream.update(mesh,far,{800,600},-1); }
+    EXPECT_TRUE(mesh.subMeshes[1].resident); EXPECT_EQ(stream.stats().evicted,0);
+    stream.budgetEviction=true; stream.budgetBytes=1024ll*1024*1024;
+    stream.update(mesh,far,{800,600},-1); EXPECT_TRUE(mesh.subMeshes[1].resident);
+    stream.budgetBytes=0; stream.update(mesh,far,{800,600},-1);
+    EXPECT_FALSE(mesh.subMeshes[1].resident); EXPECT_GT(stream.stats().evicted,0);
+}
+TEST(TileStream, RetainedIndexLoadsDetailWithoutReadingEvictedAncestor) {
+    QTemporaryDir dir;
+    writeNode(dir,"leaf.osgb",*triangle(true));
+    osg::ref_ptr<osg::PagedLOD> middle=new osg::PagedLOD;
+    middle->setCenterMode(osg::LOD::USER_DEFINED_CENTER); middle->setCenter({0,0,0}); middle->setRadius(2);
+    middle->addChild(triangle(),5,1000000);
+    middle->setFileName(1,"leaf.osgb"); middle->setRange(1,0,5);
+    writeNode(dir,"detail.osgb",*middle);
+    // pageTree normally writes detail; retain our nested page instead.
+    Mesh mesh; mesh.tileRoot=pageTree(dir,true);
+    TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1);
+    for(int i=0;i<20;++i) {
+        stream.update(mesh,camera,{800,600},-1); QThreadPool::globalInstance()->waitForDone();
+        for(int s=0;s<int(mesh.subMeshes.size());++s)
+            if(mesh.subMeshes[size_t(s)].resident) stream.uploaded(mesh,s);
+    }
+    auto parent=mesh.tileRoot->children[1];
+    ASSERT_TRUE(parent->loaded); ASSERT_EQ(parent->children.size(),2);
+    auto leaf=parent->children[1]; ASSERT_TRUE(leaf->loaded);
+    // Make the parent older: depth must still win over LRU ordering.
+    parent->lastUsed=0; leaf->lastUsed=100000;
+    Camera far=camera; far.zoom(-20);
+    stream.budgetEviction=true;
+    stream.budgetBytes=TileStream::memoryUsage(mesh).bytes-1;
+    stream.update(mesh,far,{800,600},-1);
+    EXPECT_TRUE(parent->loaded); EXPECT_FALSE(leaf->loaded);
+    stream.budgetBytes=0; stream.update(mesh,far,{800,600},-1);
+    EXPECT_FALSE(parent->loaded); EXPECT_TRUE(parent->indexed);
+    ASSERT_EQ(parent->children.size(),2); EXPECT_EQ(parent->children[1],leaf);
+    ASSERT_TRUE(QFile::remove(dir.filePath("detail.osgb")));
+    stream.budgetEviction=false;
+    stream.update(mesh,camera,{800,600},-1);
+    EXPECT_TRUE(leaf->loading); EXPECT_FALSE(parent->loading);
+    QThreadPool::globalInstance()->waitForDone(); stream.update(mesh,camera,{800,600},-1);
+    ASSERT_TRUE(leaf->loaded); EXPECT_FALSE(parent->loaded); EXPECT_FALSE(parent->loading); EXPECT_EQ(stream.stats().failures,0);
+    for(int s:leaf->renderSlots) stream.uploaded(mesh,s);
+    stream.update(mesh,camera,{800,600},-1);
+    ASSERT_FALSE(leaf->renderSlots.empty());
+    EXPECT_TRUE(mesh.subMeshes[size_t(leaf->renderSlots[0])].drawable);
+    // Restore an intermediate tier without losing its already resident leaf.
+    writeNode(dir,"detail.osgb",*middle);
+    Camera intermediate; intermediate.fitToSphere({0,0,0},3);
+    stream.update(mesh,intermediate,{800,600},-1);
+    ASSERT_TRUE(parent->loading);
+    QThreadPool::globalInstance()->waitForDone(); stream.update(mesh,intermediate,{800,600},-1);
+    EXPECT_TRUE(parent->loaded); EXPECT_EQ(parent->children[1],leaf);
+    EXPECT_TRUE(leaf->loaded); EXPECT_EQ(stream.stats().failures,0);
+}
+
+TEST(TileStream, CpuAndGpuMemoryCountSharedImagesOnce) {
+    Mesh mesh; QImage image(8,8,QImage::Format_RGBA8888); image.fill(Qt::red);
+    mesh.subMeshes.resize(2);
+    for(auto& part:mesh.subMeshes) {
+        part.baseImage=image; part.uploaded=true; part.savedVertices=3; part.savedTriangles=1;
+    }
+    const auto shared=TileStream::memoryUsage(mesh);
+    EXPECT_EQ(shared.cpuBytes,qint64(mesh.subMeshes.capacity()*sizeof(SubMesh))+image.sizeInBytes());
+    EXPECT_EQ(shared.gpuBytes,2*(3*qint64(sizeof(Vertex))+3*qint64(sizeof(unsigned)))+image.sizeInBytes());
+    mesh.subMeshes[1].baseImage=image.copy(); const auto separate=TileStream::memoryUsage(mesh);
+    EXPECT_EQ(separate.cpuBytes-shared.cpuBytes,image.sizeInBytes());
+    EXPECT_EQ(separate.gpuBytes-shared.gpuBytes,image.sizeInBytes());
+}
+TEST(Osgb, BackgroundConversionReportsKnownDataSeparately) {
+    QTemporaryDir dir; auto root=pageTree(dir); auto page=root->children[1];
+    auto memory=std::make_shared<PageMemory>(); QString error;
+    auto result=OsgbLoader::readPage(page->file,page->sourceTransform,page->origin,&error,{},page->inheritedDiffuse,page->inheritedImage,memory);
+    ASSERT_TRUE(result); EXPECT_FALSE(memory->reading.load()); EXPECT_GT(memory->sourceBytes.load(),0);
+    EXPECT_GT(memory->convertedBytes.load(),0);
+}
+TEST(ProcessMemory, WindowsCountersUseOperatingSystemMeasurements) {
+#ifdef Q_OS_WIN
+    const auto usage=processMemory(); ASSERT_TRUE(usage.valid);
+    EXPECT_GT(usage.workingSet,0); EXPECT_GT(usage.privateCommit,0);
+    EXPECT_TRUE(usage.privateWorkingSetValid); EXPECT_GT(usage.privateWorkingSet,0);
+    EXPECT_LE(usage.privateWorkingSet,usage.workingSet+8*1024*1024);
+#endif
 }

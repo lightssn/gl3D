@@ -5,8 +5,14 @@
 #include <memory>
 #include <limits>
 #include <array>
+#include <atomic>
 
 // 与 OSG/API 无关的分页树，范围挂在子节点上，矩阵用于读取外部文件。
+struct PageMemory {
+    std::atomic<qint64> sourceBytes{0}, convertedBytes{0};
+    std::atomic_bool reading{false};
+};
+
 struct TileNode {
     QString name, file;
     QStringList ancestry;
@@ -20,6 +26,8 @@ struct TileNode {
     float minRange = 0, maxRange = std::numeric_limits<float>::max();
     bool lod = false, pixelRange = false, external = false;
     bool loaded = true, loading = false, failed = false;
+    // Metadata survives resource eviction; undiscovered pages still need a read.
+    bool indexed = false;
     int owner = -1;
     int level = 0;
     std::vector<SubMesh> geometry;

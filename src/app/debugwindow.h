@@ -18,6 +18,9 @@ private:
     RenderView* m_renderView; QLabel* m_driverLabel; QLabel* m_cameraLabel; QLabel* m_timingLabel;
     QTableWidget* m_levels;
     QCheckBox* m_levelTint;
+    QCheckBox* m_cacheEviction;
+    QSpinBox* m_cacheBudget;
+    QLabel* m_memoryLabel;
     QTableWidget* m_resources; FrameGraph* m_graph; QTimer* m_timer;
     QListWidget* m_subMeshes;
     QDoubleSpinBox* m_outlineWidth;

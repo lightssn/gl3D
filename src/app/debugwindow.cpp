@@ -1,6 +1,8 @@
 #include "debugwindow.h"
 #include "glwidget.h"
 #include "renderview.h"
+#include "processmemory.h"
+#include <QElapsedTimer>
 #include <QAbstractScrollArea>
 #include <QCheckBox>
 #include <QComboBox>
@@ -106,6 +108,18 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
     connect(resetLevels,&QPushButton::clicked,this,[this] { m_renderView->scene().resetTileLevels(); refreshTileLevels(); });
     levelsLayout->addWidget(resetLevels); layout->addWidget(levelsBox);
 
+    auto* cacheBox=new QGroupBox(QStringLiteral("\u74e6\u7247\u7f13\u5b58"),content);
+    auto* cacheLayout=new QGridLayout(cacheBox);
+    m_cacheBudget=new QSpinBox(cacheBox); m_cacheBudget->setRange(1,65536); m_cacheBudget->setValue(1024); m_cacheBudget->setSuffix(" MiB");
+    cacheLayout->addWidget(new QLabel(QStringLiteral("CPU + GPU \u6570\u636e\u9884\u7b97"),cacheBox),0,0); cacheLayout->addWidget(m_cacheBudget,0,1);
+    m_cacheEviction=new QCheckBox(QStringLiteral("\u8d85\u9884\u7b97\u65f6\u4f18\u5148\u56de\u6536\u6df1\u5c42\u95f2\u7f6e\u9875"),cacheBox);
+    m_cacheEviction->setToolTip(QStringLiteral("\u9ed8\u8ba4\u4e0d\u56de\u6536\uff1b\u542f\u7528\u540e\u4fdd\u62a4\u5f53\u524d\u9700\u8981\u3001\u52a0\u8f7d\u4e2d\u548c\u9009\u4e2d\u7684\u9875\u3002\u9884\u7b97\u4e0d\u662f\u8fdb\u7a0b\u5185\u5b58\u4e0a\u9650\u3002"));
+    cacheLayout->addWidget(m_cacheEviction,1,0,1,2);
+    auto policy=[this] { m_renderView->scene().setTileCachePolicy(qint64(m_cacheBudget->value())*1024*1024,m_cacheEviction->isChecked()); };
+    connect(m_cacheEviction,&QCheckBox::toggled,this,policy); connect(m_cacheBudget,qOverload<int>(&QSpinBox::valueChanged),this,policy);
+    m_memoryLabel=new QLabel(cacheBox); m_memoryLabel->setWordWrap(true); cacheLayout->addWidget(m_memoryLabel,2,0,1,2);
+    layout->addWidget(cacheBox);
+
     auto* resourceBox = new QGroupBox("GPU 对象占用", content); auto* resourceLayout = new QVBoxLayout(resourceBox); resourceLayout->setContentsMargins(5, 8, 5, 5);
     m_resources = new QTableWidget(4, 5, resourceBox); m_resources->setHorizontalHeaderLabels({"VAO", "VBO", "EBO", "纹理", "FBO"}); m_resources->setVerticalHeaderLabels({"数量", "内存", "显存", "总计"}); m_resources->setSpan(3, 0, 1, 5); m_resources->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); m_resources->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed); m_resources->setEditTriggers(QAbstractItemView::NoEditTriggers); m_resources->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_resources->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_resources->setFocusPolicy(Qt::NoFocus); m_resources->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
     for (int row = 0; row < m_resources->rowCount(); ++row) m_resources->setRowHeight(row, 25);
@@ -197,6 +211,25 @@ void DebugWindow::setNightMode(bool night) {
 void DebugWindow::refresh() {
     if (!isVisible()) return;
     const DebugSnapshot s = m_renderView->debugSnapshot();
+    m_cacheEviction->setEnabled(m_renderView->scene().tiled()); m_cacheBudget->setEnabled(m_renderView->scene().tiled());
+    { QSignalBlocker block(m_cacheEviction); m_cacheEviction->setChecked(m_renderView->scene().tileBudgetEviction()); }
+    if(!m_cacheBudget->hasFocus()) { QSignalBlocker block(m_cacheBudget); m_cacheBudget->setValue(int(m_renderView->scene().tileBudgetBytes()/(1024*1024))); }
+    static QElapsedTimer memoryTimer;
+    static ProcessMemory process;
+    if(!memoryTimer.isValid() || memoryTimer.elapsed()>=1000) { process=processMemory(); memoryTimer.restart(); }
+    QString memoryText;
+    if(process.valid) {
+        memoryText=QStringLiteral("\u8fdb\u7a0b\u5de5\u4f5c\u96c6 %1\n\u79c1\u6709\u5de5\u4f5c\u96c6 %2 / \u79c1\u6709\u63d0\u4ea4 %3")
+            .arg(bytesText(process.workingSet),process.privateWorkingSetValid?bytesText(process.privateWorkingSet):QStringLiteral("N/A"),bytesText(process.privateCommit));
+    }
+    if(m_renderView->scene().tiled()) {
+        const auto memory=m_renderView->scene().tileStats();
+        memoryText+=QStringLiteral("\nCPU \u74e6\u7247\u7f13\u5b58\u4f30\u7b97 %1\nGPU \u74e6\u7247\u6570\u636e\u4f30\u7b97 %2\n\u540e\u53f0\u8f6c\u6362\u5df2\u77e5\u6570\u636e\u4f30\u7b97 %3\uff08\u8bfb\u53d6\u4e2d %4\uff09\n\u7f13\u5b58\u9884\u7b97\u8ba1\u8d39 %5 / %6")
+            .arg(bytesText(memory.cpuBytes),bytesText(memory.gpuBytes),bytesText(memory.backgroundBytes)).arg(memory.readingJobs)
+            .arg(bytesText(memory.bytes),bytesText(m_renderView->scene().tileBudgetBytes()));
+    }
+    m_memoryLabel->setText(memoryText);
+    m_memoryLabel->setToolTip(QStringLiteral("\u79c1\u6709\u5de5\u4f5c\u96c6\u5bf9\u7167\u4efb\u52a1\u7ba1\u7406\u5668\u7684\u8fdb\u7a0b\u5185\u5b58\u5217\uff0c\u6bcf\u79d2\u91c7\u6837\u3002\u8d44\u6e90\u4f30\u7b97\u4e0d\u7b49\u4e8e\u8fdb\u7a0b\u603b\u5360\u7528\uff0c\u4e0d\u80fd\u4e0e\u5de5\u4f5c\u96c6\u76f4\u63a5\u76f8\u52a0\u3002OSG \u8bfb\u53d6\u5185\u90e8\u3001\u5206\u914d\u5668\u548c\u9a71\u52a8\u5f00\u9500\u4e0d\u80fd\u7cbe\u786e\u5f52\u5c5e\u5230\u4e00\u4e2a\u74e6\u7247\u3002"));
     { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(m_renderView->scene().cameraController().camera().upAxis())); }
     refreshSubMeshes();
     refreshTileLevels();
@@ -236,7 +269,7 @@ void DebugWindow::refresh() {
         totalCpu += resource.cpuBytes;
         totalGpu += resource.bytes;
     }
-    auto* totalItem = new QTableWidgetItem(QString("内存 %1 显存 %2").arg(bytesText(totalCpu), bytesText(totalGpu)));
+    auto* totalItem = new QTableWidgetItem(QString("资源CPU %1 GPU %2").arg(bytesText(totalCpu), bytesText(totalGpu)));
     if (hasDriverManagedMemory) totalItem->setToolTip("已知占用合计，不含 Qt/驱动管理的 GPU 分配");
     totalItem->setTextAlignment(Qt::AlignCenter);
     m_resources->setItem(3, 0, totalItem);

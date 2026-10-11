@@ -19,6 +19,7 @@
 #include <cstring>
 #include <mutex>
 #include <functional>
+#include <set>
 
 namespace {
 std::once_flag pluginPaths;
@@ -85,12 +86,40 @@ QImage imagePixels(const osg::Image& image) {
     return output;
 }
 
+// Count known OSG payloads once; serializer and allocator overhead remain untracked.
+struct SourceMemory : osg::NodeVisitor {
+    qint64 bytes=0;
+    std::set<const void*> seen;
+    SourceMemory():NodeVisitor(TRAVERSE_ALL_CHILDREN) { setNodeMaskOverride(~0u); }
+    void state(const osg::StateSet* state) {
+        if(!state) return;
+        for(unsigned unit=0;unit<state->getTextureAttributeList().size();++unit) {
+            auto* texture=dynamic_cast<const osg::Texture2D*>(state->getTextureAttribute(unit,osg::StateAttribute::TEXTURE));
+            if(texture && texture->getImage() && seen.insert(texture->getImage()).second) bytes+=texture->getImage()->getTotalSizeInBytes();
+        }
+    }
+    void array(const osg::Array* data) { if(data && seen.insert(data).second) bytes+=data->getTotalDataSize(); }
+    void apply(osg::Node& node) override { state(node.getStateSet()); traverse(node); }
+    void apply(osg::Geode& node) override {
+        state(node.getStateSet());
+        for(unsigned i=0;i<node.getNumDrawables();++i) {
+            auto* geometry=dynamic_cast<osg::Geometry*>(node.getDrawable(i));
+            if(!geometry || !seen.insert(geometry).second) continue;
+            state(geometry->getStateSet()); array(geometry->getVertexArray()); array(geometry->getNormalArray()); array(geometry->getColorArray());
+            for(auto& uv:geometry->getTexCoordArrayList()) array(uv.get());
+            for(auto& primitive:geometry->getPrimitiveSetList()) if(seen.insert(primitive.get()).second) bytes+=primitive->getTotalDataSize();
+        }
+        traverse(node);
+    }
+};
+
 struct Reader {
     osg::Vec3d origin;
     QString directory;
     int ownerCounter = 0;
     bool unsupported = false;
     std::shared_ptr<std::atomic_bool> cancel;
+    std::shared_ptr<PageMemory> memory;
     std::map<const osg::Image*, QImage> decodedImages;
     QVector3D inheritedDiffuse{0.7f, 0.7f, 0.7f};
     QImage inheritedImage;
@@ -105,7 +134,7 @@ struct Reader {
         if (const auto* image=texture->getImage()) {
             auto found=decodedImages.find(image);
             QImage decoded=found==decodedImages.end()?imagePixels(*image):found->second;
-            if(found==decodedImages.end()) decodedImages.emplace(image,decoded);
+            if(found==decodedImages.end()) { decodedImages.emplace(image,decoded); if(memory) memory->convertedBytes.fetch_add(decoded.sizeInBytes()); }
             if (decoded.isNull()) { unsupported=true; qWarning() << "Unsupported OSGB image" << image->getPixelFormat(); }
             else mesh.baseImage=decoded;
         }
@@ -120,6 +149,7 @@ struct Reader {
         if (node.getStateSet()) state->merge(*node.getStateSet());
         if (state->getAttribute(osg::StateAttribute::PROGRAM) || (state->getMode(GL_BLEND) & osg::StateAttribute::ON)) unsupported = true;
         auto result = std::make_shared<TileNode>();
+        if(memory) memory->convertedBytes.fetch_add(sizeof(TileNode));
         result->name = QString::fromStdString(node.getName());
         result->owner = owner;
         std::copy(world.ptr(), world.ptr()+16, result->sourceTransform.begin());
@@ -155,6 +185,7 @@ struct Reader {
                     unsupported = true; continue;
                 }
                 mesh.vertices.resize(count);
+                if(memory) memory->convertedBytes.fetch_add(qint64(mesh.vertices.capacity()*sizeof(Vertex)+mesh.indices.capacity()*sizeof(unsigned)));
                 auto* uv = dynamic_cast<osg::Vec2Array*>(geometry->getTexCoordArray(0));
                 auto* normals = dynamic_cast<osg::Vec3Array*>(geometry->getNormalArray());
                 osg::Matrixd normalMatrix; normalMatrix.transpose(osg::Matrixd::inverse(world));
@@ -248,10 +279,14 @@ osg::ref_ptr<osg::Node> read(const QString& path, QString* error) {
 std::shared_ptr<TileNode> OsgbLoader::readPage(const QString& path,
     const std::array<double,16>& transform,const std::array<double,3>& origin,QString* error,
     std::shared_ptr<std::atomic_bool> cancel,
-    const QVector3D& inheritedDiffuse, const QImage& inheritedImage) {
+    const QVector3D& inheritedDiffuse, const QImage& inheritedImage, std::shared_ptr<PageMemory> memory) {
     if(cancel && cancel->load()) return {};
-    auto node=read(path,error); if(!node) return {};
-    Reader reader; reader.inheritedDiffuse=inheritedDiffuse; reader.inheritedImage=inheritedImage; reader.cancel=cancel; reader.origin.set(origin[0],origin[1],origin[2]); reader.directory=QFileInfo(path).absolutePath();
+    if(memory) memory->reading=true;
+    auto node=read(path,error);
+    if(memory) memory->reading=false;
+    if(!node || (cancel && cancel->load())) return {};
+    if(memory) { SourceMemory source; node->accept(source); memory->sourceBytes=source.bytes; }
+    Reader reader; reader.memory=memory; reader.inheritedDiffuse=inheritedDiffuse; reader.inheritedImage=inheritedImage; reader.cancel=cancel; reader.origin.set(origin[0],origin[1],origin[2]); reader.directory=QFileInfo(path).absolutePath();
     auto root=reader.convert(*node,osg::Matrixd(transform.data()),nullptr,0);
     if(reader.unsupported) qWarning() << "OSGB page contains unsupported custom state:" << path;
     return root;

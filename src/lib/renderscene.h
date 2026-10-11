@@ -31,6 +31,9 @@ public:
     QMatrix4x4 tileTransform(int slot) const;
     void setTileTransform(int slot, const QMatrix4x4& matrix);
     TileStats tileStats() const { return m_stream ? m_stream->stats() : TileStats(); }
+    bool tileBudgetEviction() const { return m_stream && m_stream->budgetEviction; }
+    qint64 tileBudgetBytes() const { return m_stream ? m_stream->budgetBytes : 1024ll*1024*1024; }
+    void setTileCachePolicy(qint64 budget, bool eviction) { if(m_stream) { m_stream->budgetBytes=std::max(qint64(0),budget); m_stream->budgetEviction=eviction; } }
     std::vector<TileLevelSettings> tileLevels() const { return m_stream ? m_stream->levels() : std::vector<TileLevelSettings>(); }
     void setTileLevel(int level, bool enabled, float minimum, float maximum, bool overrideRange) { if(m_stream) m_stream->setLevel(level,enabled,minimum,maximum,overrideRange); }
     void resetTileLevels() { if(m_stream) m_stream->resetLevels(); }

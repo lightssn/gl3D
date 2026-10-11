@@ -14,7 +14,7 @@ TileStream::TileStream(Mesh& mesh) : m_root(mesh.tileRoot) {
     discover(m_root,0);
     install(mesh, m_root, -1);
 }
-TileStream::~TileStream() { m_cancel->store(true); }
+TileStream::~TileStream() { for(auto& job:m_jobs) job.cancel->store(true); }
 QMatrix4x4 TileStream::transform(int owner) const {
     auto it=m_transforms.find(owner); return it==m_transforms.end()?QMatrix4x4():it->second;
 }
@@ -79,8 +79,16 @@ bool TileStream::sphereVisible(const QMatrix4x4& clip,const QVector3D& center,fl
     return true;
 }
 
+bool TileStream::inView(const std::shared_ptr<TileNode>& node,const QMatrix4x4& clip) const {
+    if(!visible(node->owner)) return false;
+    const auto matrix=transform(node->owner);
+    const float scale=std::max({matrix.column(0).toVector3D().length(),matrix.column(1).toVector3D().length(),matrix.column(2).toVector3D().length()});
+    return node->owner<0 || node->radius<=0 || sphereVisible(clip,matrix.map(node->center),node->radius*scale);
+}
+
 void TileStream::install(Mesh& mesh,const std::shared_ptr<TileNode>& node,int inheritedOwner) {
     if(!node) return;
+    if(node->loaded) node->indexed=true;
     if(inheritedOwner>=0) node->owner=inheritedOwner;
     const int owner=node->owner;
     if(owner>=0 && !m_centers.count(owner)) m_centers[owner]=node->center;
@@ -111,10 +119,10 @@ bool TileStream::hasEnabledGeometry(const std::shared_ptr<TileNode>& node) const
     return std::any_of(node->children.begin(),node->children.end(),[&](const auto& child) { return hasEnabledGeometry(child); });
 }
 bool TileStream::ready(const std::shared_ptr<TileNode>& node,const Mesh& mesh) const {
-    if(!node->loaded || (!node->renderSlots.empty() && !hasEnabledGeometry(node))) return false;
+    if((!node->loaded && !node->indexed) || (!node->renderSlots.empty() && !hasEnabledGeometry(node))) return false;
     for(int s:node->renderSlots) if(!mesh.subMeshes[size_t(s)].uploaded) return false;
     if(!node->renderSlots.empty() && levelEnabled(node->level)) return true;
-    if(node->children.empty()) return node->renderSlots.empty() || levelEnabled(node->level);
+    if(node->children.empty()) return node->loaded && (node->renderSlots.empty() || levelEnabled(node->level));
     // LOD 只需要有一层可用，普通 Group 的兄弟必须全部准备好。
     if(node->lod) return std::any_of(node->children.begin(),node->children.end(),[&](const auto& c){return ready(c,mesh);});
     return std::all_of(node->children.begin(),node->children.end(),[&](const auto& c){return ready(c,mesh);});
@@ -135,7 +143,50 @@ void TileStream::visit(Mesh& mesh,const std::shared_ptr<TileNode>& node,
     node->lastUsed=m_clock.elapsed();
     node->lastVisitedFrame=m_frame;
     if(!node->loaded) {
-        if(!node->loading && node->retryAfter<=m_clock.elapsed()) m_requests.push_back({node,pixels});
+        // Walk the retained index first, even if this page's resources are gone.
+        // A fine page can then be requested without rereading its ancestors.
+        const size_t pending=m_requests.size();
+        if(node->indexed) {
+            const float metric=node->pixelRange?pixels:distance;
+            for(size_t i=0;i<node->children.size();++i) {
+                const auto bounds=range(node,i);
+                if(!node->lod || (metric>=bounds.first && metric<bounds.second))
+                    visit(mesh,node->children[i],camera,viewport,clip,requestOnly);
+            }
+        }
+        bool descendantLoading=false;
+        std::function<void(const std::shared_ptr<TileNode>&)> loading=[&](const auto& p) {
+            descendantLoading=descendantLoading || (p->loading && p->lastVisitedFrame==m_frame);
+            for(const auto& child:p->children) loading(child);
+        };
+        if(node->indexed) for(const auto& child:node->children) loading(child);
+        // A ready finer sibling does not satisfy a newly requested coarse tier.
+        // CPU-resident detail may still be uploading; do not reload ancestors then.
+        std::function<bool(const std::shared_ptr<TileNode>&)> desiredResident=[&](const auto& p) {
+            if(!inView(p,clip)) return true;
+            if(!p->loaded && !p->indexed) return false;
+            if(p->children.empty()) return p->loaded;
+            if(!p->lod) return std::all_of(p->children.begin(),p->children.end(),desiredResident);
+            const auto mat=transform(p->owner);
+            const float d=std::max((camera.eye()-mat.map(p->center)).length(),0.001f);
+            const float sc=std::max({mat.column(0).toVector3D().length(),mat.column(1).toVector3D().length(),mat.column(2).toVector3D().length()});
+            const float px=camera.ortho()?p->radius*sc*2*viewport.height()/std::max(camera.distance(),0.001f)
+                :p->radius*sc*viewport.height()/(std::tan(camera.fov()*0.0087266463f)*d);
+            const float metric=p->pixelRange?px:d;
+            for(size_t i=0;i<p->children.size();++i) {
+                const auto bounds=range(p,i);
+                if(metric>=bounds.first && metric<bounds.second && desiredResident(p->children[i])) return true;
+            }
+            return false;
+        };
+        if(node->external && m_requests.size()==pending && !descendantLoading && !desiredResident(node)
+            && !node->loading && node->retryAfter<=m_clock.elapsed()) {
+            const QVector4D projected=clip*QVector4D(c,1);
+            const float w=std::max(projected.w(),0.001f);
+            // Compare screen pixels so wide viewports do not favor horizontal edges.
+            const float x=projected.x()/w*viewport.width(), y=projected.y()/w*viewport.height();
+            m_requests.push_back({node,x*x+y*y,pixels});
+        }
         return;
     }
     for(int s:node->renderSlots) if(!requestOnly && levelEnabled(node->level) && mesh.subMeshes[size_t(s)].uploaded) mesh.subMeshes[size_t(s)].drawable=true;
@@ -169,7 +220,8 @@ void TileStream::visit(Mesh& mesh,const std::shared_ptr<TileNode>& node,
 }
 
 void TileStream::release(Mesh& mesh,const std::shared_ptr<TileNode>& node) {
-    for(auto& c:node->children) release(mesh,c);
+    // An external descendant owns a separate page and is reclaimed separately.
+    for(auto& c:node->children) if(!c->external) release(mesh,c);
     for(int s:node->renderSlots) {
         auto& part=mesh.subMeshes[size_t(s)];
         const auto revision=m_revision++;
@@ -177,17 +229,65 @@ void TileStream::release(Mesh& mesh,const std::shared_ptr<TileNode>& node) {
         m_freeSlots.push_back(s);
     }
     node->renderSlots.clear();
+    node->loaded=false;
+}
+
+TileStats TileStream::memoryUsage(const Mesh& mesh) {
+    TileStats stats;
+    std::set<qint64> cpuImages,gpuImages;
+    auto cpuImage=[&](const QImage& image) {
+        if(!image.isNull() && cpuImages.insert(image.cacheKey()).second) stats.cpuBytes+=image.sizeInBytes();
+    };
+    stats.cpuBytes+=qint64(mesh.subMeshes.capacity()*sizeof(SubMesh));
+    for(const auto& part:mesh.subMeshes) if(part.resident) {
+        ++stats.resident; if(part.drawable) ++stats.visible;
+        stats.cpuBytes+=qint64(part.vertices.capacity()*sizeof(Vertex)+part.indices.capacity()*sizeof(unsigned));
+        stats.cpuBytes+=part.textureData.size()+part.metallicRoughnessData.size()+part.normalData.size();
+        cpuImage(part.baseImage);
+        if(part.uploaded) {
+            stats.gpuBytes+=qint64(part.savedVertices)*sizeof(Vertex)+qint64(part.savedTriangles)*3*sizeof(unsigned);
+            if(!part.baseImage.isNull() && gpuImages.insert(part.baseImage.cacheKey()).second) stats.gpuBytes+=part.baseImage.sizeInBytes();
+        }
+    }
+    std::function<void(const std::shared_ptr<TileNode>&)> nodes=[&](const auto& node) {
+        if(!node) return;
+        stats.cpuBytes+=sizeof(TileNode)+qint64(node->children.capacity()*sizeof(std::shared_ptr<TileNode>)+node->renderSlots.capacity()*sizeof(int)+node->geometry.capacity()*sizeof(SubMesh));
+        cpuImage(node->inheritedImage);
+        for(const auto& child:node->children) nodes(child);
+    }; nodes(mesh.tileRoot);
+    stats.bytes=stats.cpuBytes+stats.gpuBytes;
+    return stats;
 }
 
 void TileStream::update(Mesh& mesh,const Camera& camera,const QSize& viewport,int selected) {
     ++m_frame;
+    const float aspect=viewport.height()>0?float(viewport.width())/viewport.height():1.f;
+    const auto clip=camera.projMatrix(aspect)*camera.viewMatrix();
     for(auto& part:mesh.subMeshes) part.drawable=false;
     for(auto it=m_jobs.begin();it!=m_jobs.end();) {
+        // Cancel before installing a completed result from the previous view.
+        if(!inView(it->target,clip)) it->cancel->store(true);
         if(it->result.wait_for(std::chrono::seconds(0))!=std::future_status::ready) { ++it; continue; }
         auto result=it->result.get(); auto target=it->target;
         target->loading=false;
+        if(it->cancel->load()) { it=m_jobs.erase(it); continue; }
         if(result.node) {
             auto page=result.node;
+            // Reuse discovered external branches when restoring a parent page.
+            std::function<void(const std::shared_ptr<TileNode>&,const std::shared_ptr<TileNode>&)> reuse;
+            reuse=[&](const auto& oldNode,const auto& newNode) {
+                for(size_t i=0;i<newNode->children.size();++i) {
+                    auto& child=newNode->children[i];
+                    if(child->external) {
+                        auto old=std::find_if(oldNode->children.begin(),oldNode->children.end(),[&](const auto& c) {
+                            return c->external && c->file==child->file;
+                        });
+                        if(old!=oldNode->children.end()) child=*old;
+                    } else if(i<oldNode->children.size() && !oldNode->children[i]->external)
+                        reuse(oldNode->children[i],child);
+                }
+            };
+            if(target->indexed) reuse(target,page);
             target->geometry=std::move(page->geometry); target->children=std::move(page->children);
             target->lod=page->lod; target->pixelRange=page->pixelRange;
             target->center=page->center; target->radius=page->radius; target->loaded=true; target->failed=false;
@@ -206,65 +306,83 @@ void TileStream::update(Mesh& mesh,const Camera& camera,const QSize& viewport,in
         it=m_jobs.erase(it);
     }
     m_requests.clear();
-    const float aspect=viewport.height()>0?float(viewport.width())/viewport.height():1.f;
-    visit(mesh,m_root,camera,viewport,camera.projMatrix(aspect)*camera.viewMatrix());
-    const int selectedOwner=selected>=0 && selected<int(mesh.subMeshes.size())?mesh.subMeshes[size_t(selected)].tileOwner:-1;
-    struct Cached { std::shared_ptr<TileNode> node; qint64 used; };
-    std::vector<Cached> cached;
-    std::function<void(const std::shared_ptr<TileNode>&)> collect=[&](const auto& n) {
-        if(n->external && n->loaded) cached.push_back({n,n->lastUsed});
-        for(auto& c:n->children) collect(c);
-    };
-    collect(m_root);
-    qint64 bytes=0; for(const auto& p:mesh.subMeshes) if(p.resident) bytes+=p.residentBytes;
-    std::sort(cached.begin(),cached.end(),[](const auto& a,const auto& b){return a.used<b.used;});
-    for(auto& c:cached) {
-        auto n=c.node;
-        if(!n->loaded || n->loading || n->owner==selectedOwner || n->lastVisitedFrame==m_frame) continue;
-        // 帧内已使用的子层也会保护其外部祖先。
-        bool active=false;
-        std::function<void(const std::shared_ptr<TileNode>&)> check=[&](const auto& p) {
-            // Request-only pages still need time for incremental GPU uploads.
-            if(p->loading || p->lastVisitedFrame==m_frame) active=true;
-            for(int s:p->renderSlots) if(mesh.subMeshes[size_t(s)].drawable) active=true;
-            for(auto& child:p->children) check(child);
-        }; check(n);
-        if(active || (bytes<=budgetBytes && m_clock.elapsed()-n->lastUsed<expireMs)) continue;
-        qint64 before=0; for(const auto& p:mesh.subMeshes) if(p.resident) before+=p.residentBytes;
-        release(mesh,n); n->children.clear(); n->loaded=false;
-        qint64 after=0; for(const auto& p:mesh.subMeshes) if(p.resident) after+=p.residentBytes;
-        bytes-=before-after; ++m_stats.evicted;
+    visit(mesh,m_root,camera,viewport,clip);
+    if(budgetEviction) {
+        const int selectedOwner=selected>=0 && selected<int(mesh.subMeshes.size())?mesh.subMeshes[size_t(selected)].tileOwner:-1;
+        struct Cached { std::shared_ptr<TileNode> node; qint64 used; };
+        std::vector<Cached> cached;
+        std::function<void(const std::shared_ptr<TileNode>&)> collect=[&](const auto& n) {
+            if(n->external && n->loaded) cached.push_back({n,n->lastUsed});
+            for(auto& c:n->children) collect(c);
+        };
+        collect(m_root);
+        qint64 bytes=memoryUsage(mesh).bytes;
+        // Keep intermediate preview tiers as long as deeper idle pages suffice.
+        std::sort(cached.begin(),cached.end(),[](const auto& a,const auto& b){
+            if(a.node->level!=b.node->level) return a.node->level>b.node->level;
+            return a.used<b.used;
+        });
+        for(auto& c:cached) {
+            if(bytes<=budgetBytes) break;
+            auto n=c.node;
+            if(!n->loaded || n->loading || n->owner==selectedOwner || n->lastVisitedFrame==m_frame) continue;
+            // 帧内已使用的子层也会保护其外部祖先。
+            bool active=false;
+            std::function<void(const std::shared_ptr<TileNode>&)> check=[&](const auto& p) {
+                // Request-only pages still need time for incremental GPU uploads.
+                if(p->loading || p->lastVisitedFrame==m_frame) active=true;
+                for(int s:p->renderSlots) if(mesh.subMeshes[size_t(s)].drawable) active=true;
+                for(auto& child:p->children) check(child);
+            }; check(n);
+            if(active) continue;
+            const qint64 before=memoryUsage(mesh).bytes;
+            release(mesh,n);
+            const qint64 after=memoryUsage(mesh).bytes;
+            bytes-=before-after; ++m_stats.evicted;
+        }
     }
-    std::sort(m_requests.begin(),m_requests.end(),[](const auto& a,const auto& b){return a.priority>b.priority;});
+    std::stable_sort(m_requests.begin(),m_requests.end(),[](const auto& a,const auto& b) {
+        if(a.centerDistance!=b.centerDistance) return a.centerDistance<b.centerDistance;
+        return a.pixels>b.pixels;
+    });
 #if defined(GL3D_HAS_OSGB)
     for(auto& request:m_requests) {
-        if(m_jobs.size()>=2) break;
+        if(m_jobs.size()>=4) break;
         auto target=request.node;
         if(target->loaded || target->loading) continue;
         if(target->ancestry.contains(target->file)) {
             target->retryAfter=std::numeric_limits<qint64>::max(); target->failed=true;
             ++m_stats.failures; m_stats.lastError=QStringLiteral("分页引用环：%1").arg(target->file); continue;
         }
-        // 外部引用环不会递归读入；持续深分页由预算限制。
+        // External reference cycles are rejected before scheduling.
         target->loading=true;
         const auto path=target->file;
         const auto transform=target->sourceTransform;
         const auto origin=target->origin;
-        const auto cancel=m_cancel;
+        const auto cancel=std::make_shared<std::atomic_bool>(false);
+        const auto memory=std::make_shared<PageMemory>();
         const auto diffuse=target->inheritedDiffuse;
         const auto image=target->inheritedImage;
-        auto task=std::make_shared<std::packaged_task<Result()>>([path,transform,origin,cancel,diffuse,image] {
+        auto task=std::make_shared<std::packaged_task<Result()>>([path,transform,origin,cancel,diffuse,image,memory] {
             Result r;
-            try { r.node=OsgbLoader::readPage(path,transform,origin,&r.error,cancel,diffuse,image); }
+            try { r.node=OsgbLoader::readPage(path,transform,origin,&r.error,cancel,diffuse,image,memory); }
             catch(const std::exception& e) { r.error=QString::fromUtf8(e.what()); }
             catch(...) { r.error=QStringLiteral("OSGB 分页读取异常：%1").arg(path); }
+            if(cancel->load()) { r.node.reset(); r.error.clear(); memory->convertedBytes=0; }
+            memory->reading=false; memory->sourceBytes=0;
             return r;
         });
-        m_jobs.push_back({target,task->get_future()});
+        m_jobs.push_back({target,task->get_future(),cancel,memory});
         QThreadPool::globalInstance()->start([task] { (*task)(); });
     }
 #endif
-    m_stats.resident=0; m_stats.visible=0; m_stats.bytes=0;
-    for(const auto& p:mesh.subMeshes) if(p.resident) { ++m_stats.resident; m_stats.bytes+=p.residentBytes; if(p.drawable) ++m_stats.visible; }
-    m_stats.loading=int(m_jobs.size()); m_stats.queued=std::max(0,int(m_requests.size())-m_stats.loading);
+    const auto usage=memoryUsage(mesh);
+    m_stats.resident=usage.resident; m_stats.visible=usage.visible;
+    m_stats.bytes=usage.bytes; m_stats.cpuBytes=usage.cpuBytes; m_stats.gpuBytes=usage.gpuBytes;
+    m_stats.backgroundBytes=0; m_stats.readingJobs=0;
+    for(const auto& job:m_jobs) {
+        m_stats.backgroundBytes+=job.memory->sourceBytes.load()+job.memory->convertedBytes.load();
+        if(job.memory->reading.load()) ++m_stats.readingJobs;
+    }
+    m_stats.loading=int(m_jobs.size()); m_stats.queued=int(std::count_if(m_requests.begin(),m_requests.end(),[](const auto& request) { return !request.node->loading && !request.node->failed; }));
 }
