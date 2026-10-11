@@ -34,9 +34,6 @@ GLWidget::GLWidget(QWindow* parent) : QOpenGLWindow(QOpenGLWindow::NoPartialUpda
     m_renderTimer->setTimerType(Qt::PreciseTimer);
     m_renderTimer->setInterval(16); //约60 FPS，只触发按需重绘
     connect(m_renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
-    m_osgbTimer = new QTimer(this);
-    m_osgbTimer->setInterval(33);
-    connect(m_osgbTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
     qRegisterMetaType<DebugSnapshot>("DebugSnapshot");
 
     //后台加载线程 解析在worker线程 跨线程信号按队列转发
@@ -118,12 +115,6 @@ void GLWidget::resizeGL(int w, int h) {
 
 void GLWidget::paintGL() {
     auto& gl = GLFunctions::instance();
-    if (m_scene.updateOsgb(QSize(width(), height()))) {
-        m_renderer->upload(m_mesh);
-        rebuildTileBounds();
-        m_selectedSubMesh = -1;
-        emit selectionChanged(false);
-    }
     m_frameDrawCalls = 0;
     m_depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
     m_faceCulling ? gl.glEnable(GL_CULL_FACE) : gl.glDisable(GL_CULL_FACE);
@@ -147,6 +138,7 @@ void GLWidget::paintGL() {
     if(m_scene.tiled() && m_renderer) {
         m_scene.updateTiles(QSize(m_fbW,m_fbH));
         m_renderer->syncTiles(m_scene);
+        syncTileBounds();
         // 任务完成与过期回收必须继续推进，固定帧率模式由定时器驱动。
         if(!m_fixedFps) update();
     }
@@ -195,9 +187,8 @@ void GLWidget::paintGL() {
     }
     m_shader->unbind();
 
-    if (m_renderOptions.showTileBounds && m_scene.hasOsgb())
-        drawOverlay(m_tileBoundsMesh, proj * view, true, QVector3D());
-
+    if(m_renderOptions.showTileBounds && m_scene.tiled())
+        drawOverlay(m_tileBoundsMesh,proj*view,true,QVector3D());
     //操作器与坐标轴HUD 顶层显示 关深度测试
     gl.glDisable(GL_DEPTH_TEST);
     if (m_transformMode != None && m_showGizmo) drawGizmo(proj, view);
@@ -361,30 +352,16 @@ void GLWidget::rebuildGizmo() {
 void GLWidget::refreshOverlays() {
     rebuildGrid();
     if (m_transformMode != None) rebuildGizmo();
-    rebuildTileBounds();
     }
 
-void GLWidget::rebuildTileBounds() {
+void GLWidget::syncTileBounds() {
+    if(m_tileBoundsRevision==m_scene.tileBoundsRevision()) return;
     std::vector<OverlayVertex> vertices;
-    if (const OsgbStream* stream = m_scene.osgb()) {
-        const auto& mins = stream->tileMins();
-        const auto& maxs = stream->tileMaxs();
-        const auto& ids = stream->tileIds();
-        const QVector3D color(1.0f, 0.7f, 0.12f);
-        for (size_t i = 0; i < mins.size(); ++i) {
-            if (i && i < ids.size() && ids[i] == ids[i-1]) continue;
-            const QVector3D& a = mins[i]; const QVector3D& b = maxs[i];
-            const QVector3D p[8] = {{a.x(),a.y(),a.z()}, {b.x(),a.y(),a.z()},
-                {b.x(),b.y(),a.z()}, {a.x(),b.y(),a.z()}, {a.x(),a.y(),b.z()},
-                {b.x(),a.y(),b.z()}, {b.x(),b.y(),b.z()}, {a.x(),b.y(),b.z()}};
-            for (int e = 0; e < 12; ++e) {
-                const int u = e < 4 ? e : e < 8 ? e-4+4 : e-8;
-                const int v = e < 4 ? (e+1)%4 : e < 8 ? (e-4+1)%4+4 : e-8+4;
-                pushLine(vertices,p[u],p[v],color);
-            }
-        }
-    }
-    uploadOverlay(m_tileBoundsMesh, vertices);
+    const auto& lines=m_scene.tileBoundsLines();
+    const QVector3D color(1.0f,0.7f,0.12f);
+    for(size_t i=0;i+1<lines.size();i+=2) pushLine(vertices,lines[i],lines[i+1],color);
+    uploadOverlay(m_tileBoundsMesh,vertices);
+    m_tileBoundsRevision=m_scene.tileBoundsRevision();
 }
 
 //网格/坐标轴/操作器几何统一上传 交错pos3+color3
@@ -436,16 +413,6 @@ void GLWidget::drawGrid(const QMatrix4x4& proj, const QMatrix4x4& view) {
     drawOverlay(m_gridMesh, proj * view, true, QVector3D());
     }
 
-void GLWidget::renderSelectedGeometry() {
-    if (m_selectedSubMesh < 0) return;
-    const OsgbStream* stream = m_scene.osgb();
-    if (!stream) { m_renderer->render(*m_shader, m_selectedSubMesh); return; }
-    const auto& ids = stream->tileIds();
-    if (size_t(m_selectedSubMesh) >= ids.size()) return;
-    for (size_t i = 0; i < ids.size(); ++i)
-        if (ids[i] == ids[size_t(m_selectedSubMesh)]) m_renderer->render(*m_shader, int(i));
-}
-
 //选中模型: stencil描红边 + 浅粉半透明蒙版
 void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     auto& gl = GLFunctions::instance();
@@ -461,7 +428,7 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     gl.glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     gl.glDepthFunc(GL_LEQUAL);
     m_shader->setFloat("uOutline", 0.0f);
-    renderSelectedGeometry();
+    m_renderer->render(*m_shader, m_selectedSubMesh);
     gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     //2 沿法线膨胀画红边 只画stencil未覆盖的外缘
@@ -471,7 +438,7 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     gl.glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
     gl.glStencilMask(0x00);
     gl.glDepthFunc(GL_LEQUAL);
-    renderSelectedGeometry();
+    m_renderer->render(*m_shader, m_selectedSubMesh);
     gl.glStencilMask(0xFF);
     gl.glDisable(GL_STENCIL_TEST);
 
@@ -482,7 +449,7 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     m_shader->setVec4("uFlatColorValue", 1.0f, 0.76f, 0.82f, 0.35f);
     gl.glDepthMask(GL_FALSE);
     gl.glDepthFunc(GL_LEQUAL);
-    renderSelectedGeometry();
+    m_renderer->render(*m_shader, m_selectedSubMesh);
     gl.glDepthFunc(GL_LESS);
     gl.glDepthMask(GL_TRUE);
     gl.glDisable(GL_BLEND);
@@ -592,47 +559,13 @@ void GLWidget::pickAt(const QPoint& pos) {
     }
 
 bool GLWidget::hasModel() const {
-<<<<<<< HEAD
     return m_scene.tiled() || (m_renderer && !m_renderer->empty());
-=======
-    return m_scene.hasOsgb() || (m_renderer && !m_renderer->empty());
->>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     }
 
 bool GLWidget::loadModel(const QString& path) { return loadModelsAsync({path}); }
 
 bool GLWidget::loadModelsAsync(const QStringList& paths) {
     if (m_loading) return false; //加载进行中 忽略重复请求
-    if (QFileInfo(path).isDir() || QFileInfo(path).suffix().compare("osgb", Qt::CaseInsensitive) == 0) {
-        emit loadStarted();
-        QString error;
-        if (!m_scene.openOsgb(path, &error)) {
-            emit loadFailed(error);
-            emit loadFinished();
-            return false;
-        }
-        m_currentPath = path;
-        m_outlineWidth = std::clamp(m_scene.osgb()->rootRadius() * 0.0005f, 0.001f, 0.5f);
-        m_transformPos = QVector3D();
-        m_transformRot = QQuaternion();
-        m_transformScale = QVector3D(1, 1, 1);
-        m_undoStack.clear(); m_redoStack.clear();
-        m_dragAxis = 0;
-        emit historyChanged(false, false);
-        if (isValid()) {
-            makeCurrent();
-            m_renderer->upload(m_mesh);
-            refreshOverlays();
-            doneCurrent();
-        }
-        m_selectedSubMesh = -1;
-        emit selectionChanged(false);
-        emit modelLoaded(QString("%1  OSGB 瓦片流").arg(QFileInfo(path).fileName()));
-        m_osgbTimer->start();
-        emit loadFinished();
-        update();
-        return true;
-    }
     m_loading = true;
     m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
     emit loadStarted(); //主窗口显示进度条
@@ -652,12 +585,8 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         return;
         }
     m_scene.setMesh(mesh, m_currentPath);
-<<<<<<< HEAD
     m_tileEdits.clear();
     if(m_scene.tiled()) { m_pbr=false; m_normalMap=false; }
-=======
-    m_osgbTimer->stop();
->>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     if (isValid()) { //context未就绪则留待initializeGL上传
         makeCurrent();
         if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
@@ -690,11 +619,6 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
     }
 
 void GLWidget::resetView() {
-    if (const OsgbStream* stream = m_scene.osgb()) {
-        m_camera.fitToSphere(stream->rootCenter(), std::max(stream->rootRadius(), 1.0f));
-        update();
-        return;
-    }
     if (!m_mesh.subMeshes.empty())
         m_camera.fitToSphere(m_mesh.center(), m_mesh.radius());
     update();
@@ -724,7 +648,6 @@ void GLWidget::deleteModel() {
     releaseOverlay(m_tileBoundsMesh);
     doneCurrent();
     m_scene.clear();
-    m_osgbTimer->stop();
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
@@ -762,7 +685,7 @@ void GLWidget::setWireframe(bool on) {
     }
 
 void GLWidget::setTileBounds(bool enabled) {
-    m_renderOptions.showTileBounds = enabled;
+    m_renderOptions.showTileBounds=enabled;
     update();
 }
 

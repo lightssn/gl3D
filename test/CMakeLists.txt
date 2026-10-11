@@ -26,15 +26,9 @@ find_package(GTest CONFIG REQUIRED)
 
 add_executable(gl3d_test
     test_meshloader.cpp
-<<<<<<< HEAD
     test_camera.cpp
     test_main.cpp
-=======
-    test_osgbstream.cpp
->>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
 )
-
-target_compile_definitions(gl3d_test PRIVATE GL3D_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 target_link_libraries(gl3d_test PRIVATE
     gl3d_core

@@ -1,6 +1,7 @@
 #include "osgbloader.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QImage>
 #include <QBuffer>
@@ -11,6 +12,7 @@
 #include <osg/Geometry>
 #include <osg/Transform>
 #include <osg/PagedLOD>
+#include <osg/ProxyNode>
 #include <osg/Material>
 #include <osg/Texture2D>
 #include <osg/TriangleIndexFunctor>
@@ -293,7 +295,50 @@ std::shared_ptr<TileNode> OsgbLoader::readPage(const QString& path,
 }
 
 bool OsgbLoader::load(const QString& path, Mesh& mesh, QString* error) {
+    if(QFileInfo(path).isDir()) return loadDirectory(path,mesh,error);
     return loadMany({path}, mesh, error);
+}
+
+bool OsgbLoader::loadDirectory(const QString& path, Mesh& mesh, QString* error,
+    const std::function<void(int)>& progress) {
+    // Inspect references rather than loading every LOD file as an independent root.
+    struct References : osg::NodeVisitor {
+        QString directory;
+        std::set<QString>& incoming;
+        bool hasReferences=false;
+        References(const QString& dir,std::set<QString>& refs)
+            : NodeVisitor(TRAVERSE_ALL_CHILDREN),directory(dir),incoming(refs) { setNodeMaskOverride(~0u); }
+        void collect(const std::string& database,unsigned count,const std::function<std::string(unsigned)>& name) {
+            const QDir base(QDir(directory).filePath(QString::fromStdString(database)));
+            for(unsigned i=0;i<count;++i) {
+                const QString file=QString::fromStdString(name(i));
+                if(file.isEmpty()) continue;
+                hasReferences=true;
+                const QFileInfo info(base.filePath(file));
+                incoming.insert(info.exists()?info.canonicalFilePath():info.absoluteFilePath());
+            }
+        }
+        void apply(osg::PagedLOD& node) override {
+            collect(node.getDatabasePath(),node.getNumFileNames(),[&](unsigned i) { return node.getFileName(i); }); traverse(node);
+        }
+        void apply(osg::ProxyNode& node) override {
+            collect(node.getDatabasePath(),node.getNumFileNames(),[&](unsigned i) { return node.getFileName(i); }); traverse(node);
+        }
+    };
+    QStringList files, roots;
+    QDirIterator it(path,{"*.osgb","*.OSGB"},QDir::Files,QDirIterator::Subdirectories);
+    while(it.hasNext()) files.push_back(QFileInfo(it.next()).canonicalFilePath());
+    std::sort(files.begin(),files.end()); files.removeDuplicates();
+    std::set<QString> incoming, empty;
+    for(qsizetype i=0;i<files.size();++i) {
+        auto node=read(files[i],error); if(!node) return false;
+        References refs(QFileInfo(files[i]).absolutePath(),incoming); node->accept(refs);
+        if(!node->getBound().valid() && !refs.hasReferences) empty.insert(files[i]);
+        if(progress) progress(int((i+1)*70/files.size()));
+    }
+    for(const auto& file:files) if(!incoming.count(file) && !empty.count(file)) roots.push_back(file);
+    if(roots.isEmpty()) { if(error) *error="No root OSGB pages found in directory"; return false; }
+    return loadMany(roots,mesh,error,[&](int value) { if(progress) progress(70+value*30/100); });
 }
 
 bool OsgbLoader::loadMany(const QStringList& paths, Mesh& mesh, QString* error,

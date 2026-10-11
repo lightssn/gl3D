@@ -25,6 +25,7 @@ bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
     outMesh = Mesh{};
     QString suffix = QFileInfo(path).suffix().toLower();
 #if defined(GL3D_HAS_OSGB)
+    if (QFileInfo(path).isDir()) return OsgbLoader::loadDirectory(path, outMesh, err, progress);
     if (suffix == "osgb") return OsgbLoader::load(path, outMesh, err);
 #endif
     bool ok = false;

@@ -12,11 +12,8 @@ struct RenderOptions {
     bool pbr = false;
     bool normalMap = true;
     bool wireframe = false;
-<<<<<<< HEAD
     bool tileLevelTint = false;
-=======
     bool showTileBounds = false;
->>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     bool fixedFps = false;
     int targetFps = 60;
     int debugView = 0;

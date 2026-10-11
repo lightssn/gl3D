@@ -5,12 +5,7 @@
 #include "cameracontroller.h"
 #include "selectioncontroller.h"
 #include "renderoptions.h"
-<<<<<<< HEAD
 #include "tilestream.h"
-=======
-#include "osgbstream.h"
-#include <memory>
->>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
 
 // OpenGL 和 Vulkan 共享的场景状态。
 // 这里不持有任何 API 对象，后端只负责把场景上传到自己的 GPU 资源。
@@ -19,19 +14,16 @@ public:
     ~RenderScene();
     bool loadModel(const QString& path, QString* error = nullptr);
     void setMesh(Mesh mesh, const QString& path = QString());
-    bool openOsgb(const QString& path, QString* error = nullptr);
-    bool updateOsgb(const QSize& viewport);
-    bool hasOsgb() const { return bool(m_osgb); }
-    const OsgbStream* osgb() const { return m_osgb.get(); }
     void clear();
     void resetView();
 
-<<<<<<< HEAD
     bool hasModel() const { return m_mesh.tileRoot || !m_mesh.subMeshes.empty(); }
     bool tiled() const { return bool(m_stream); }
     int tileRepresentative(int slot) const;
     bool sameTile(int a, int b) const;
     void updateTiles(const QSize& viewport);
+    const std::vector<QVector3D>& tileBoundsLines() const { return m_tileBoundsLines; }
+    uint64_t tileBoundsRevision() const { return m_tileBoundsRevision; }
     void markUploaded(int slot);
     bool drawable(int slot) const;
     static QVector3D tileLevelColor(int level);
@@ -47,9 +39,6 @@ public:
     std::vector<TileLevelSettings> tileLevels() const { return m_stream ? m_stream->levels() : std::vector<TileLevelSettings>(); }
     void setTileLevel(int level, bool enabled, float minimum, float maximum, bool overrideRange) { if(m_stream) m_stream->setLevel(level,enabled,minimum,maximum,overrideRange); }
     void resetTileLevels() { if(m_stream) m_stream->resetLevels(); }
-=======
-    bool hasModel() const { return !m_mesh.subMeshes.empty() || hasOsgb(); }
->>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     const QString& sourcePath() const { return m_sourcePath; }
     Mesh& mesh() { return m_mesh; }
     const Mesh& mesh() const { return m_mesh; }
@@ -61,6 +50,9 @@ public:
     const RenderOptions& options() const { return m_options; }
 
 private:
+    void refreshTileBounds();
+    std::vector<QVector3D> m_tileBoundsLines;
+    uint64_t m_tileBoundsRevision = 0;
     void refreshTileRepresentatives();
     std::map<int, int> m_tileRepresentatives;
     std::unique_ptr<TileStream> m_stream;
@@ -69,6 +61,4 @@ private:
     SelectionController m_selection;
     RenderOptions m_options;
     QString m_sourcePath;
-    std::unique_ptr<OsgbStream> m_osgb;
-    void replaceOsgbMesh(Mesh mesh);
 };

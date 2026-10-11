@@ -111,6 +111,36 @@ TEST(TileStream, FrustumRejectsOutsideSphere) {
     EXPECT_FALSE(TileStream::sphereVisible(projection,{0,0,5},1));
 }
 
+TEST(Osgb, DirectoryOpeningLoadsRootsWithoutDuplicatingDetailPages) {
+    QTemporaryDir dir; pageTree(dir);
+    Mesh mesh; QString error;
+    ASSERT_TRUE(MeshLoader::load(dir.path(),mesh,&error)) << error.toStdString();
+    ASSERT_TRUE(mesh.tileRoot); EXPECT_TRUE(mesh.tileRoot->lod);
+    ASSERT_EQ(mesh.tileRoot->children.size(),2);
+    EXPECT_TRUE(mesh.tileRoot->children[1]->external);
+    EXPECT_EQ(mesh.tileRoot->children[1]->file,QDir::cleanPath(dir.filePath("detail.osgb")));
+    EXPECT_FALSE(mesh.tileRoot->children[1]->loaded);
+}
+
+TEST(Osgb, SharedBoundsFollowVisibleGeometryAndTileTransforms) {
+    Mesh mesh; mesh.tileRoot=std::make_shared<TileNode>();
+    mesh.tileRoot->owner=0; mesh.tileRoot->radius=2;
+    SubMesh part; part.vertices.resize(3); part.indices={0,1,2};
+    part.boundsMin={-1,-1,0}; part.boundsMax={1,1,0};
+    mesh.tileRoot->geometry.push_back(part); mesh.bboxMin={-2,-2,-2}; mesh.bboxMax={2,2,2};
+    RenderScene scene; scene.setMesh(std::move(mesh)); scene.markUploaded(0);
+    scene.options().showTileBounds=true; scene.updateTiles({800,600});
+    ASSERT_EQ(scene.tileBoundsLines().size(),24);
+    EXPECT_EQ(scene.tileBoundsLines()[0],QVector3D(-1,-1,0));
+    const auto revision=scene.tileBoundsRevision();
+    QMatrix4x4 matrix; matrix.translate(1,0,0); scene.setTileTransform(0,matrix);
+    scene.updateTiles({800,600});
+    EXPECT_EQ(scene.tileBoundsLines()[0],QVector3D(0,-1,0));
+    EXPECT_GT(scene.tileBoundsRevision(),revision);
+    scene.setTileVisible(0,false); scene.updateTiles({800,600});
+    EXPECT_TRUE(scene.tileBoundsLines().empty());
+}
+
 TEST(TileStream, KeepsCoarseUntilDetailUploadedAndEvictsUnusedPage) {
     QTemporaryDir dir; Mesh mesh; mesh.tileRoot=pageTree(dir);
     TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1);
