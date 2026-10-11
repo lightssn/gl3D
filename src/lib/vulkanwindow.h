@@ -38,6 +38,8 @@ public:
     void setUpAxis(UpAxis axis) override;
     void setOrtho(bool enabled);
     void setWireframe(bool enabled);
+    void setTileBounds(bool enabled) override;
+    void refreshOsgb();
     void setAntialiasing(bool enabled);
     bool supportsAntialiasing() const override { return m_multisamplingAvailable; }
     void setMipmaps(bool enabled);
@@ -136,6 +138,7 @@ private:
     int m_transformMode = 0;
     TransformState m_dragStart;
     QTimer m_renderTimer;
+    QTimer m_osgbTimer;
     QElapsedTimer m_fpsTimer;
     QElapsedTimer m_frameTimer;
     std::vector<float> m_frameTimes;

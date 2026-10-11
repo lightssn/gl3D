@@ -17,11 +17,25 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 option(GL3D_ENABLE_VULKAN "Build the optional Vulkan backend" ON)
+<<<<<<< HEAD
 option(GL3D_ENABLE_OSGB "Read OSGB using OpenSceneGraph (own renderers)" ON)
 if(GL3D_ENABLE_OSGB)
     find_package(unofficial-osg CONFIG REQUIRED COMPONENTS plugins)
 endif()
 include(cmake/DeployOsg.cmake)
+=======
+find_package(unofficial-osg CONFIG QUIET)
+set(GL3D_HAS_OSGB OFF)
+if(unofficial-osg_FOUND)
+    set(GL3D_HAS_OSGB ON)
+    file(GLOB GL3D_OSG_PLUGIN_DIRS
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/plugins/osgPlugins-*"
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/plugins/osgPlugins-*")
+    message(STATUS "OSGB support enabled")
+else()
+    message(STATUS "OSGB support disabled (install vcpkg osg)")
+endif()
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
 
 find_package(Qt6 QUIET COMPONENTS Widgets Gui OpenGL OpenGLWidgets)
 if(Qt6_FOUND)

@@ -58,6 +58,7 @@ bool RenderScene::loadModel(const QString& path, QString* error)
 
 void RenderScene::setMesh(Mesh mesh, const QString& path)
 {
+<<<<<<< HEAD
     m_stream.reset();
     // Value copies share the source tree; paging state belongs to this scene.
     if (mesh.tileRoot && mesh.tileRoot.use_count() > 1) {
@@ -69,6 +70,9 @@ void RenderScene::setMesh(Mesh mesh, const QString& path)
         };
         mesh.tileRoot = clone(mesh.tileRoot);
     }
+=======
+    m_osgb.reset();
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     m_mesh = std::move(mesh);
     m_cameraController.camera().setUpAxis(m_mesh.tileRoot ? UpAxis::Z : UpAxis::Y);
     if(m_mesh.tileRoot) m_stream=std::make_unique<TileStream>(m_mesh);
@@ -104,7 +108,11 @@ void RenderScene::setMesh(Mesh mesh, const QString& path)
 
 void RenderScene::clear()
 {
+<<<<<<< HEAD
     m_stream.reset();
+=======
+    m_osgb.reset();
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     m_mesh = Mesh();
     m_tileRepresentatives.clear();
     m_sourcePath.clear();
@@ -112,8 +120,41 @@ void RenderScene::clear()
     m_selection.centers().clear();
 }
 
+bool RenderScene::openOsgb(const QString& path, QString* error)
+{
+    auto stream = std::make_unique<OsgbStream>();
+    if (!stream->open(path, error)) return false;
+    m_osgb = std::move(stream);
+    m_sourcePath = path;
+    replaceOsgbMesh(m_osgb->visibleMesh());
+    m_cameraController.camera().fitToSphere(m_osgb->rootCenter(), std::max(m_osgb->rootRadius(), 1.0f));
+    return true;
+}
+
+void RenderScene::replaceOsgbMesh(Mesh mesh)
+{
+    m_mesh = std::move(mesh);
+    m_selection.indexRef() = -1;
+    m_selection.centers().clear();
+    const auto& mins = m_osgb->tileMins();
+    const auto& maxs = m_osgb->tileMaxs();
+    for (size_t i = 0; i < mins.size(); ++i)
+        m_selection.centers().push_back((mins[i] + maxs[i]) * 0.5f);
+}
+
+bool RenderScene::updateOsgb(const QSize& viewport)
+{
+    if (!m_osgb || !m_osgb->update(m_cameraController.camera(), viewport)) return false;
+    replaceOsgbMesh(m_osgb->visibleMesh());
+    return true;
+}
+
 void RenderScene::resetView()
 {
+    if (m_osgb) {
+        m_cameraController.camera().fitToSphere(m_osgb->rootCenter(), std::max(m_osgb->rootRadius(), 1.0f));
+        return;
+    }
     if (hasModel())
         m_cameraController.camera().fitToSphere(m_mesh.center(), m_mesh.radius());
 }

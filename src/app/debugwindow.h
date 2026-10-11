@@ -24,7 +24,8 @@ private:
     QTableWidget* m_resources; FrameGraph* m_graph; QTimer* m_timer;
     QListWidget* m_subMeshes;
     QDoubleSpinBox* m_outlineWidth;
-    QCheckBox *m_msaa, *m_mipmap, *m_depth, *m_culling, *m_pbr, *m_normalMap, *m_fixedFps;
+    QCheckBox *m_msaa, *m_mipmap, *m_depth, *m_culling, *m_pbr, *m_normalMap, *m_fixedFps, *m_tileBounds;
+    QLabel* m_tileStats;
     QComboBox* m_debugView;
     QComboBox* m_upAxis;
     QSpinBox* m_fpsSpin;

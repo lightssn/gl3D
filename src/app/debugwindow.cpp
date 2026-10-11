@@ -1,8 +1,12 @@
 #include "debugwindow.h"
 #include "glwidget.h"
 #include "renderview.h"
+<<<<<<< HEAD
 #include "processmemory.h"
 #include <QElapsedTimer>
+=======
+#include "renderscene.h"
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
 #include <QAbstractScrollArea>
 #include <QCheckBox>
 #include <QComboBox>
@@ -83,12 +87,21 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
 
     auto* viewBox = new QGroupBox("调试视图", content); auto* viewLayout = new QGridLayout(viewBox); auto* debugView = new QComboBox(viewBox); debugView->addItems({"光照结果", "法线", "UV"}); viewLayout->addWidget(new QLabel("着色模式", viewBox), 0, 0); viewLayout->addWidget(debugView, 0, 1); connect(debugView, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int mode) { m_renderView->setDebugView(mode); }); layout->addWidget(viewBox);
     m_debugView = debugView;
+<<<<<<< HEAD
     m_upAxis = new QComboBox(viewBox);
     m_upAxis->addItems({"Y", "Z"});
     viewLayout->addWidget(new QLabel(QStringLiteral("\u5411\u4e0a\u8f74"), viewBox), 1, 0);
     viewLayout->addWidget(m_upAxis, 1, 1);
     connect(m_upAxis, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
         [this](int index) { m_renderView->setUpAxis(index == 1 ? UpAxis::Z : UpAxis::Y); });
+=======
+    m_tileBounds = new QCheckBox("显示瓦片外框", viewBox);
+    viewLayout->addWidget(m_tileBounds, 1, 0, 1, 2);
+    connect(m_tileBounds, &QCheckBox::toggled, this, [this](bool on) { m_renderView->setTileBounds(on); });
+    m_tileStats = new QLabel(viewBox);
+    m_tileStats->setWordWrap(true);
+    viewLayout->addWidget(m_tileStats, 2, 0, 1, 2);
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
 
     auto* levelsBox = new QGroupBox(QStringLiteral("\u91d1\u5b57\u5854\u5c42\u7ea7\uff08\u5df2\u53d1\u73b0\uff09"), content);
@@ -130,7 +143,20 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
     auto* subMeshBox = new QGroupBox("子网格", content); auto* subMeshLayout = new QVBoxLayout(subMeshBox); subMeshLayout->setContentsMargins(5, 8, 5, 5);
     m_subMeshes = new QListWidget(subMeshBox); m_subMeshes->setSelectionMode(QAbstractItemView::SingleSelection); m_subMeshes->setMinimumHeight(0); m_subMeshes->setMaximumHeight(180); m_subMeshes->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); m_subMeshes->setTextElideMode(Qt::ElideRight); m_subMeshes->setStyleSheet("QListWidget { background: #0d1117; color: #e6edf3; } QListWidget::item:selected { background: #246a9e; color: #ffffff; } QListWidget::item:hover { background: #1d3f5a; }");
     connect(m_subMeshes, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
-        m_renderView->setSubMeshVisible(m_subMeshes->row(item), item->checkState() == Qt::Checked);
+        const int index = m_subMeshes->row(item);
+        const bool visible = item->checkState() == Qt::Checked;
+        if (const OsgbStream* stream = m_renderView->scene().osgb()) {
+            const auto& ids = stream->tileIds();
+            if (index >= 0 && index < int(ids.size())) {
+                QSignalBlocker blocker(m_subMeshes);
+                for (int i=0; i<int(ids.size()); ++i) if (ids[size_t(i)] == ids[size_t(index)]) {
+                    m_renderView->setSubMeshVisible(i, visible);
+                    if (m_subMeshes->item(i)) m_subMeshes->item(i)->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
+                }
+                return;
+            }
+        }
+        m_renderView->setSubMeshVisible(index, visible);
         });
     connect(m_subMeshes, &QListWidget::currentRowChanged, this, [this](int row) {
         m_renderView->selectSubMesh(row);
@@ -165,7 +191,11 @@ void DebugWindow::setRenderView(RenderView* view) {
     view->setFixedFpsEnabled(m_fixedFps->isChecked());
     view->setTargetFps(m_fpsSpin->value());
     view->setDebugView(m_debugView->currentIndex());
+<<<<<<< HEAD
     { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(view->scene().cameraController().camera().upAxis())); }
+=======
+    view->setTileBounds(m_tileBounds->isChecked());
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     refreshSubMeshes();
     refreshTileLevels();
     m_pbr->setEnabled(m_renderView->supportsPbr());
@@ -211,6 +241,7 @@ void DebugWindow::setNightMode(bool night) {
 void DebugWindow::refresh() {
     if (!isVisible()) return;
     const DebugSnapshot s = m_renderView->debugSnapshot();
+<<<<<<< HEAD
     m_cacheEviction->setEnabled(m_renderView->scene().tiled()); m_cacheBudget->setEnabled(m_renderView->scene().tiled());
     { QSignalBlocker block(m_cacheEviction); m_cacheEviction->setChecked(m_renderView->scene().tileBudgetEviction()); }
     if(!m_cacheBudget->hasFocus()) { QSignalBlocker block(m_cacheBudget); m_cacheBudget->setValue(int(m_renderView->scene().tileBudgetBytes()/(1024*1024))); }
@@ -231,6 +262,17 @@ void DebugWindow::refresh() {
     m_memoryLabel->setText(memoryText);
     m_memoryLabel->setToolTip(QStringLiteral("\u79c1\u6709\u5de5\u4f5c\u96c6\u5bf9\u7167\u4efb\u52a1\u7ba1\u7406\u5668\u7684\u8fdb\u7a0b\u5185\u5b58\u5217\uff0c\u6bcf\u79d2\u91c7\u6837\u3002\u8d44\u6e90\u4f30\u7b97\u4e0d\u7b49\u4e8e\u8fdb\u7a0b\u603b\u5360\u7528\uff0c\u4e0d\u80fd\u4e0e\u5de5\u4f5c\u96c6\u76f4\u63a5\u76f8\u52a0\u3002OSG \u8bfb\u53d6\u5185\u90e8\u3001\u5206\u914d\u5668\u548c\u9a71\u52a8\u5f00\u9500\u4e0d\u80fd\u7cbe\u786e\u5f52\u5c5e\u5230\u4e00\u4e2a\u74e6\u7247\u3002"));
     { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(m_renderView->scene().cameraController().camera().upAxis())); }
+=======
+    const OsgbStream* stream = m_renderView->scene().osgb();
+    m_tileBounds->setEnabled(stream != nullptr);
+    m_pbr->setEnabled(stream == nullptr);
+    m_normalMap->setEnabled(stream == nullptr);
+    if (stream) {
+        const auto tiles = stream->stats();
+        m_tileStats->setText(QString("瓦片：可见 %1 / 已发现 %2  加载中 %3  失败 %4  CPU 缓存 %5")
+            .arg(tiles.visible).arg(tiles.tiles).arg(tiles.pending).arg(tiles.failed).arg(bytesText(tiles.cacheBytes)));
+    } else m_tileStats->clear();
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     refreshSubMeshes();
     refreshTileLevels();
     m_pbr->setEnabled(m_renderView->supportsPbr());

@@ -57,7 +57,11 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion("1.0");
 
     QCommandLineParser parser;
+<<<<<<< HEAD
     parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb/osgb → OpenGL渲染");
+=======
+    parser.setApplicationDescription("gl3d 模型查看器 stl/obj/glb/osgb → OpenGL/Vulkan渲染");
+>>>>>>> d8eb4ffe194d0afa7bf43d9f71952bfa2058c50e
     parser.addHelpOption();
     parser.addVersionOption();
 #if defined(GL3D_HAS_VULKAN)
