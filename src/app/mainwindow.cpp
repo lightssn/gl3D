@@ -196,6 +196,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_modelOpen = true;
         updateBackendUi();
         });
+    connect(m_glWidget, &GLWidget::loadUnavailable, this, [this](const QString& message) {
+        m_modelOpen = m_glWidget->scene().hasModel();
+        m_modelInfo->setText(message);
+        statusBar()->showMessage(message);
+        updateBackendUi();
+        });
     connect(m_glWidget, &GLWidget::loadFailed, this, [this](const QString& err) {
         m_modelOpen = m_glWidget->scene().hasModel();
         updateBackendUi();

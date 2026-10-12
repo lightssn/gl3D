@@ -172,13 +172,6 @@ static QString resolveTexture(const QString& objDir, const QString& relPath) {
     return QString();
     }
 
-//快速统计文件行数 进度百分比用 文本格式才需要
-static int countLines(const QString& path) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return 0;
-    return f.readAll().count('\n');
-    }
-
 bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
                          const std::function<void(int)>& progress) {
     QFile f(path);
@@ -187,8 +180,10 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
         return false;
         }
     QString text = decodeTextFile(f.readAll());
+    //复用首次读取的文本统计进度基准，末行没有换行符时也计入。
+    const qint64 totalLines = text.count('\n')
+        + (!text.isEmpty() && !text.endsWith('\n') ? 1 : 0);
     const QString objDir = QFileInfo(path).absolutePath();
-    const int totalLines = countLines(path); //进度基准 预读一次
 
     //原始属性池 面索引引用它们
     std::vector<QVector3D> positions;
@@ -198,7 +193,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
 
     QTextStream in(&text, QIODevice::ReadOnly);
     SubMesh* cur = nullptr;
-    int parsedLines = 0; //已解析行数 进度用
+    qint64 parsedLines = 0; //已解析行数 进度用
 
     //obj顶点去重，(vi,ti,ni)组合→子网格内顶点下标
     std::unordered_map<long long, unsigned int> vertMap;
@@ -211,9 +206,9 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
     while (!in.atEnd()) {
         const QString line = in.readLine();
         //每读512行报一次进度
-        int linesRead = ++parsedLines;
+        const qint64 linesRead = ++parsedLines;
         if (progress && (linesRead & 0x1FF) == 0 && totalLines > 0)
-            progress(std::min(linesRead * 100 / totalLines, 99));
+            progress(int(std::min<qint64>(linesRead * 100 / totalLines, 99)));
         const QStringList parts = line.trimmed().split(' ', Qt::SkipEmptyParts);
         if (parts.isEmpty() || parts[0].startsWith('#')) continue;
         const QString& tag = parts[0];

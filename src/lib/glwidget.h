@@ -78,6 +78,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
 
         //后台加载 解析在worker线程 解析完主线程上传显存
         QThread* m_loadThread = nullptr;
+        QStringList m_pendingLoadPaths;
         ModelLoaderWorker* m_loadWorker = nullptr;
         bool m_loading = false; //加载中 防止重复触发
         QString m_currentPath;  //当前加载的模型路径 状态栏显示文件名用
@@ -217,6 +218,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         void fpsUpdated(int fps);
         void modelLoaded(const QString& info);  //模型统计信息
         void loadFailed(const QString& err);
+        void loadUnavailable(const QString& message);
         void selectionChanged(bool selected); //选中状态变化 联动工具栏操作器按钮
         void subMeshSelected(int index);
         void contextMenuRequested(const QPoint& globalPos); //右键点击 弹出开关栏菜单

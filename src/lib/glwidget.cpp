@@ -112,6 +112,13 @@ void GLWidget::initializeGL() {
         if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
         refreshOverlays();
         }
+    // The CLI may request a model before the window's first initialization.
+    if(!m_pendingLoadPaths.isEmpty()) QTimer::singleShot(0,this,[this] {
+        if(m_pendingLoadPaths.isEmpty()) return;
+        const QStringList paths=std::move(m_pendingLoadPaths);
+        m_pendingLoadPaths.clear();
+        loadModelsAsync(paths);
+    });
     }
 
 void GLWidget::resizeGL(int w, int h) {
@@ -256,7 +263,7 @@ DebugSnapshot GLWidget::collectDebugSnapshot() {
     s.fov = m_camera.fov(); s.distance = m_camera.distance();
     s.eye = m_camera.eye(); s.target = m_camera.target(); s.ortho = m_camera.ortho();
     s.antialiasing = m_antialiasing; s.modelLoaded = hasModel();
-    if (!isValid()) return s;
+    if (!isValid() || !m_renderer) return s;
     auto& gl = GLFunctions::instance();
     const auto* renderer = gl.glGetString(GL_RENDERER);
     const auto* version = gl.glGetString(GL_VERSION);
@@ -288,6 +295,7 @@ DebugSnapshot GLWidget::collectDebugSnapshot() {
 }
 
 DebugSnapshot GLWidget::debugSnapshot() {
+    if (!isValid()) return collectDebugSnapshot();
     makeCurrent();
     DebugSnapshot s = collectDebugSnapshot();
     doneCurrent();
@@ -577,6 +585,15 @@ bool GLWidget::loadModel(const QString& path) { return loadModelsAsync({path}); 
 
 bool GLWidget::loadModelsAsync(const QStringList& paths) {
     if (m_loading) return false; //加载进行中 忽略重复请求
+    if (!isValid() || !m_renderer) {
+        if(!m_renderer) {
+            m_pendingLoadPaths=paths;
+            update();
+            return true;
+        }
+        emit loadUnavailable(QStringLiteral("OpenGL 上下文尚未就绪，未加载模型，请稍后重新打开。"));
+        return false;
+        }
     m_loading = true;
     m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
     emit loadStarted(); //主窗口显示进度条
@@ -595,15 +612,18 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         update();
         return;
         }
+    if (!isValid() || !m_renderer) {
+        emit loadUnavailable(QStringLiteral("OpenGL 上下文不可用，未上传模型，请稍后重新打开。"));
+        emit loadFinished();
+        return;
+        }
     m_scene.setMesh(mesh, m_currentPath);
     m_tileEdits.clear();
     if(m_scene.tiled()) { m_pbr=false; m_normalMap=false; }
-    if (isValid()) { //context未就绪则留待initializeGL上传
-        makeCurrent();
-        if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
-        refreshOverlays();
-        doneCurrent();
-        }
+    makeCurrent();
+    if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
+    refreshOverlays();
+    doneCurrent();
     m_camera.fitToSphere(m_mesh.center(), m_mesh.radius());
     m_outlineWidth = RenderOptions{}.outlineWidth;
     m_transformPos = QVector3D();
@@ -640,7 +660,7 @@ void GLWidget::setClearColor(float r, float g, float b) {
     m_clearColor[0] = r;
     m_clearColor[1] = g;
     m_clearColor[2] = b;
-    if (!isValid()) return;
+    if (!isValid() || !m_renderer) return;
     makeCurrent();
     auto& gl = GLFunctions::instance();
     gl.glClearColor(r, g, b, 1.0f);
@@ -651,13 +671,16 @@ void GLWidget::setClearColor(float r, float g, float b) {
 
 //清除模型 释放GPU资源 隐藏操作器并复位选中状态
 void GLWidget::deleteModel() {
-    if (!hasModel()) return;
-    makeCurrent(); //事件回调中 须使上下文当前才能删GL对象
-    m_renderer->clear();
-    releaseOverlay(m_gridMesh);
-    releaseOverlay(m_gizmoMesh);
-    releaseOverlay(m_tileBoundsMesh);
-    doneCurrent();
+    if (!hasModel() && m_pendingLoadPaths.isEmpty()) return;
+    m_pendingLoadPaths.clear();
+    if(isValid() && m_renderer) {
+        makeCurrent(); // GL cleanup requires a valid current context.
+        m_renderer->clear();
+        releaseOverlay(m_gridMesh);
+        releaseOverlay(m_gizmoMesh);
+        releaseOverlay(m_tileBoundsMesh);
+        doneCurrent();
+    }
     m_scene.clear();
     m_tileEdits.clear();
     m_idleFpsTimer->stop();
@@ -755,12 +778,12 @@ void GLWidget::selectSubMesh(int index) {
 
 void GLWidget::setAntialiasing(bool on) {
     m_antialiasing = on;
-    if (isValid()) { makeCurrent(); on ? GLFunctions::instance().glEnable(GL_MULTISAMPLE) : GLFunctions::instance().glDisable(GL_MULTISAMPLE); doneCurrent(); }
+    if (isValid() && m_renderer) { makeCurrent(); on ? GLFunctions::instance().glEnable(GL_MULTISAMPLE) : GLFunctions::instance().glDisable(GL_MULTISAMPLE); doneCurrent(); }
     update();
     }
 
 void GLWidget::setMipmaps(bool on) {
-    if (m_renderer) {
+    if (isValid() && m_renderer) {
         makeCurrent();
         m_renderer->setMipmapsEnabled(on);
         doneCurrent();
@@ -797,7 +820,7 @@ void GLWidget::setTargetFps(int fps) {
 void GLWidget::setUpAxis(UpAxis axis) {
     if (m_camera.upAxis() == axis) return;
     m_camera.setUpAxis(axis);
-    if (isValid()) { makeCurrent(); rebuildGrid(); doneCurrent(); }
+    if (isValid() && m_renderer) { makeCurrent(); rebuildGrid(); doneCurrent(); }
     update();
 }
 
