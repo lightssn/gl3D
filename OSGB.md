@@ -4,7 +4,7 @@
 
 ## 打开数据
 
-运行 `build/bin/Release/gl3d.exe`，通过工具栏选择后端，再打开场景入口 `.osgb`。保留入口文件、子瓦片和纹理的相对目录。只有单个叶子文件时，只显示该叶子的内容。也可打开 OSGB 目录，首次扫描文件引用以确定根瓦片，大目录建议直接打开现有入口文件。不读取 XML 地理坐标元数据。
+运行 `build/bin/Release/gl3d.exe`，通过工具栏选择后端，再打开场景入口 `.osgb`。保留入口文件、子瓦片和纹理的相对目录。只有单个叶子文件时，只显示该叶子的内容。不读取 XML 地理坐标元数据。
 
 ```powershell
 .\build\bin\Release\gl3d.exe 'D:/dataset/root.osgb'
@@ -79,6 +79,5 @@ Retained page index and layered eviction:
 - Parent reloads reuse retained external branches. Active pages and loading paths remain protected.
 
 Merge integration:
-- Directory opening uses the existing asynchronous loader and TileStream. A first-pass reference scan identifies actual root pages, preventing simultaneous loading of ancestor and descendant files as independent roots.
 - Tile bounds use shared RenderScene line geometry for both backends and follow visible geometry, tile transforms and hiding. Buffers refresh only when bounds change.
 - The parallel OsgbStream pipeline is superseded by TileStream; the 1024 MiB budget, retained index, layered eviction, multi-selection and editor state remain intact.

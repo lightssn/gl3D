@@ -7,8 +7,6 @@
 
 class GL3D_EXPORT OsgbLoader {
 public:
-    static bool loadDirectory(const QString& path, Mesh& mesh, QString* error,
-        const std::function<void(int)>& progress = {});
     static bool loadMany(const QStringList& paths, Mesh& mesh, QString* error,
         const std::function<void(int)>& progress = {});
     static bool load(const QString& path, Mesh& mesh, QString* error);

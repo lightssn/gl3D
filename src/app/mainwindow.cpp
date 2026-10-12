@@ -46,7 +46,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_toolBar->setMovable(false);
     QAction* actOpen = m_toolBar->addAction("打开模型");
     QAction* actReset = m_toolBar->addAction("复位视角");
-    QAction* actOpenOsgbDirectory = m_toolBar->addAction(QStringLiteral("\u6253\u5f00 OSGB \u76ee\u5f55"));
     m_actDebug = m_toolBar->addAction("调试器");
     m_themeBtn = new QPushButton("日间模式", this);
     m_toolBar->addSeparator();
@@ -173,10 +172,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (!paths.isEmpty()) openModels(paths);
         });
     connect(actReset, &QAction::triggered, this, [this]() { activeView()->resetView(); });
-    connect(actOpenOsgbDirectory,&QAction::triggered,this,[this]() {
-        const QString path=QFileDialog::getExistingDirectory(this,QStringLiteral("\u9009\u62e9 OSGB \u74e6\u7247\u76ee\u5f55"));
-        if(!path.isEmpty()) openModel(path);
-    });
     m_actDebug->setCheckable(true);
     connect(m_actDebug, &QAction::toggled, m_debugWindow, &QWidget::setVisible);
     connect(m_themeBtn, &QPushButton::clicked, this, [this]() {

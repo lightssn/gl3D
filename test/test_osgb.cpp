@@ -111,17 +111,6 @@ TEST(TileStream, FrustumRejectsOutsideSphere) {
     EXPECT_FALSE(TileStream::sphereVisible(projection,{0,0,5},1));
 }
 
-TEST(Osgb, DirectoryOpeningLoadsRootsWithoutDuplicatingDetailPages) {
-    QTemporaryDir dir; pageTree(dir);
-    Mesh mesh; QString error;
-    ASSERT_TRUE(MeshLoader::load(dir.path(),mesh,&error)) << error.toStdString();
-    ASSERT_TRUE(mesh.tileRoot); EXPECT_TRUE(mesh.tileRoot->lod);
-    ASSERT_EQ(mesh.tileRoot->children.size(),2);
-    EXPECT_TRUE(mesh.tileRoot->children[1]->external);
-    EXPECT_EQ(mesh.tileRoot->children[1]->file,QDir::cleanPath(dir.filePath("detail.osgb")));
-    EXPECT_FALSE(mesh.tileRoot->children[1]->loaded);
-}
-
 TEST(Osgb, SharedBoundsFollowVisibleGeometryAndTileTransforms) {
     Mesh mesh; mesh.tileRoot=std::make_shared<TileNode>();
     mesh.tileRoot->owner=0; mesh.tileRoot->radius=2;
