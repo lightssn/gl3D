@@ -101,6 +101,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         QElapsedTimer m_fpsTimer;
         QElapsedTimer m_frameTimer;
         QTimer* m_renderTimer = nullptr;
+        QTimer* m_idleFpsTimer = nullptr;
         std::vector<float> m_frameTimesMs;
         RenderOptions& m_renderOptions = m_scene.options();
         bool& m_wireframe = m_renderOptions.wireframe;
@@ -174,6 +175,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         void setClearColor(float r, float g, float b); //主题切换联动视口底色
         bool hasModel() const;
         void deleteModel();          //清除当前模型与选中状态
+        bool isLoading() const { return m_loading; }
         void undo();                 //撤销上次变换
         void redo();                 //重做被撤销的变换
         bool canUndo() const { return !m_undoStack.empty(); }
@@ -184,6 +186,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         void setWireframe(bool on);      //true线框模式 可见三角面带浅灰描边
         void setAntialiasing(bool on);
         void setTileBounds(bool enabled) override;
+        void requestRedraw() override { m_scene.invalidateTiles(); update(); }
         void setMipmaps(bool on);
         void setShowGrid(bool on);
         void setShowGizmo(bool on);

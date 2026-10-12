@@ -388,6 +388,7 @@ void VulkanWindow::keyPressEvent(QKeyEvent* event)
 
 void VulkanWindow::recordFrame(int drawCalls)
 {
+    m_idleFpsTimer.start(1000);
     m_lastDrawCalls = drawCalls;
     const qint64 elapsed = m_frameTimer.restart();
     if (elapsed > 0) {

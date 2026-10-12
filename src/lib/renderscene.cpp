@@ -26,11 +26,19 @@ bool RenderScene::sameTile(int a,int b) const {
 }
 void RenderScene::updateTiles(const QSize& viewport) {
     if (!m_stream) return;
+    m_tileFramePending=false;
+    m_tileView=m_cameraController.camera().viewMatrix();
+    m_tileProjection=m_cameraController.camera().projMatrix(1);
     m_stream->update(m_mesh, m_cameraController.camera(), viewport, m_selection.index());
     refreshTileRepresentatives();
     refreshTileBounds();
     auto& centers=m_selection.centers(); centers.resize(m_mesh.subMeshes.size());
     for(size_t i=0;i<centers.size();++i) centers[i]=m_stream->center(m_mesh.subMeshes[i].tileOwner);
+}
+bool RenderScene::needsTileRedraw() const {
+    if(!m_stream) return false;
+    return !m_options.osgbOnDemand || m_tileFramePending || m_stream->needsUpdate() ||
+        m_tileView!=m_cameraController.camera().viewMatrix() || m_tileProjection!=m_cameraController.camera().projMatrix(1);
 }
 void RenderScene::refreshTileBounds() {
     std::vector<QVector3D> lines;
@@ -61,7 +69,9 @@ void RenderScene::refreshTileBounds() {
     }
     if(lines!=m_tileBoundsLines) { m_tileBoundsLines=std::move(lines); ++m_tileBoundsRevision; }
 }
-void RenderScene::markUploaded(int slot) { if(m_stream) m_stream->uploaded(m_mesh,slot); }
+void RenderScene::markUploaded(int slot) {
+    if(m_stream) { m_stream->uploaded(m_mesh,slot); invalidateTiles(); }
+}
 bool RenderScene::drawable(int slot) const {
     return slot>=0 && slot<int(m_mesh.subMeshes.size()) && (!m_stream || m_mesh.subMeshes[size_t(slot)].drawable);
 }
@@ -69,12 +79,12 @@ bool RenderScene::tileVisible(int slot) const {
     return slot>=0 && slot<int(m_mesh.subMeshes.size()) && m_mesh.subMeshes[size_t(slot)].resident &&
         (!m_stream || m_stream->visible(m_mesh.subMeshes[size_t(slot)].tileOwner));
 }
-void RenderScene::setTileVisible(int slot,bool visible) { if(m_stream && slot>=0 && slot<int(m_mesh.subMeshes.size())) m_stream->setVisible(m_mesh.subMeshes[size_t(slot)].tileOwner,visible); }
+void RenderScene::setTileVisible(int slot,bool visible) { if(m_stream && slot>=0 && slot<int(m_mesh.subMeshes.size())) { m_stream->setVisible(m_mesh.subMeshes[size_t(slot)].tileOwner,visible); invalidateTiles(); } }
 QMatrix4x4 RenderScene::tileTransform(int slot) const {
     return m_stream && slot>=0 && slot<int(m_mesh.subMeshes.size())?m_stream->transform(m_mesh.subMeshes[size_t(slot)].tileOwner):QMatrix4x4();
 }
 void RenderScene::setTileTransform(int slot,const QMatrix4x4& matrix) {
-    if(m_stream && slot>=0 && slot<int(m_mesh.subMeshes.size())) m_stream->setTransform(m_mesh.subMeshes[size_t(slot)].tileOwner,matrix);
+    if(m_stream && slot>=0 && slot<int(m_mesh.subMeshes.size())) { m_stream->setTransform(m_mesh.subMeshes[size_t(slot)].tileOwner,matrix); invalidateTiles(); }
 }
 
 bool RenderScene::loadModel(const QString& path, QString* error)
@@ -89,6 +99,7 @@ bool RenderScene::loadModel(const QString& path, QString* error)
 void RenderScene::setMesh(Mesh mesh, const QString& path)
 {
     m_stream.reset();
+    invalidateTiles();
     // Value copies share the source tree; paging state belongs to this scene.
     if (mesh.tileRoot && mesh.tileRoot.use_count() > 1) {
         std::function<std::shared_ptr<TileNode>(const std::shared_ptr<TileNode>&)> clone = [&](const auto& node) {

@@ -442,7 +442,7 @@ public:
         m_df->vkCmdEndRenderPass(cmd);
         m_window->recordFrame(drawCalls);
         m_window->frameReady();
-        if(m_window->scene().tiled() && !m_window->scene().options().fixedFps) m_window->requestUpdate();
+        if(m_window->scene().needsTileRedraw() && !m_window->scene().options().fixedFps) m_window->requestUpdate();
     }
 
 private:
@@ -1577,7 +1577,16 @@ VulkanWindow::VulkanWindow(QVulkanInstance* instance, QWindow* parent) : QVulkan
     m_fpsTimer.start();
     m_frameTimer.start();
     m_renderTimer.setTimerType(Qt::PreciseTimer);
-    connect(&m_renderTimer, &QTimer::timeout, this, [this]() { requestUpdate(); });
+    m_idleFpsTimer.setSingleShot(true);
+    m_idleFpsTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_idleFpsTimer,&QTimer::timeout,this,[this] {
+        if(m_frameTimer.elapsed()>=1000) {
+            m_lastFps=0; m_frameCount=0; emit fpsUpdated(0);
+        }
+    });
+    connect(&m_renderTimer, &QTimer::timeout, this, [this]() {
+        if(!m_scene.tiled() || m_scene.needsTileRedraw()) requestUpdate();
+    });
 }
 
 VulkanWindow::~VulkanWindow()
@@ -1699,6 +1708,8 @@ void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
 
 void VulkanWindow::clearModel()
 {
+    m_tileEdits.clear();
+    m_idleFpsTimer.stop();
     ++m_gridRevision;
     m_scene.clear();
     m_bounds.clear();

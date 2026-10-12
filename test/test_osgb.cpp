@@ -111,6 +111,30 @@ TEST(TileStream, FrustumRejectsOutsideSphere) {
     EXPECT_FALSE(TileStream::sphereVisible(projection,{0,0,5},1));
 }
 
+TEST(Osgb, OnDemandWaitsForPagingAndUploadsThenSleepsUntilChanges) {
+    QTemporaryDir dir; Mesh mesh; mesh.tileRoot=pageTree(dir);
+    RenderScene scene; scene.setMesh(std::move(mesh));
+    EXPECT_TRUE(scene.options().osgbOnDemand); EXPECT_TRUE(scene.needsTileRedraw());
+    scene.updateTiles({800,600}); EXPECT_TRUE(scene.needsTileRedraw());
+    for(int frame=0;frame<20;++frame) {
+        QThreadPool::globalInstance()->waitForDone(); scene.updateTiles({800,600});
+        for(int s=0;s<int(scene.mesh().subMeshes.size());++s)
+            if(scene.mesh().subMeshes[size_t(s)].resident && !scene.mesh().subMeshes[size_t(s)].uploaded) scene.markUploaded(s);
+    }
+    ASSERT_EQ(scene.mesh().subMeshes.size(),2);
+    EXPECT_FALSE(scene.needsTileRedraw());
+    scene.cameraController().camera().panLocal(0.01f,0,0);
+    EXPECT_TRUE(scene.needsTileRedraw()); scene.updateTiles({800,600});
+    EXPECT_FALSE(scene.needsTileRedraw());
+    scene.invalidateTiles(); EXPECT_TRUE(scene.needsTileRedraw());
+    scene.updateTiles({800,600}); EXPECT_FALSE(scene.needsTileRedraw());
+    scene.options().osgbOnDemand=false; EXPECT_TRUE(scene.needsTileRedraw());
+    scene.options().osgbOnDemand=true; EXPECT_FALSE(scene.needsTileRedraw());
+    scene.setTileVisible(0,false); EXPECT_TRUE(scene.needsTileRedraw());
+    scene.updateTiles({800,600}); EXPECT_FALSE(scene.needsTileRedraw());
+    scene.clear(); EXPECT_FALSE(scene.needsTileRedraw());
+}
+
 TEST(Osgb, SharedBoundsFollowVisibleGeometryAndTileTransforms) {
     Mesh mesh; mesh.tileRoot=std::make_shared<TileNode>();
     mesh.tileRoot->owner=0; mesh.tileRoot->radius=2;

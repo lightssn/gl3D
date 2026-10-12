@@ -45,6 +45,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_toolBar = addToolBar("主工具栏");
     m_toolBar->setMovable(false);
     QAction* actOpen = m_toolBar->addAction("打开模型");
+    m_actClear=m_toolBar->addAction(QStringLiteral("\u6e05\u7a7a"));
+    m_actClear->setEnabled(false);
+    connect(m_actClear,&QAction::triggered,this,&MainWindow::clearScene);
     QAction* actReset = m_toolBar->addAction("复位视角");
     m_actDebug = m_toolBar->addAction("调试器");
     m_themeBtn = new QPushButton("日间模式", this);
@@ -194,7 +197,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         updateBackendUi();
         });
     connect(m_glWidget, &GLWidget::loadFailed, this, [this](const QString& err) {
-        m_modelOpen = false;
+        m_modelOpen = m_glWidget->scene().hasModel();
         updateBackendUi();
         QMessageBox::warning(this, "加载失败", err);
         });
@@ -230,6 +233,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         });
     connect(m_glWidget, &GLWidget::loadFinished, this, [this]() {
         m_loadProgress->setVisible(false);
+        updateBackendUi();
         });
 
     // 右键菜单 开关顶部工具栏与状态栏 视口/工具栏/状态栏共用
@@ -403,6 +407,18 @@ void MainWindow::updateBackendUi() {
         m_backendLabel->setText(gl ? "后端: OpenGL" : "后端: Vulkan");
     if (m_backendButton)
         m_backendButton->setText(gl ? "后端: OpenGL" : "后端: Vulkan");
+    if(m_backendButton) m_backendButton->setEnabled(!m_modelOpen && m_actVulkan &&
+#if defined(GL3D_HAS_VULKAN)
+        true
+#else
+        false
+#endif
+    );
+    bool loading=m_glWidget->isLoading();
+#if defined(GL3D_HAS_VULKAN)
+    if(!gl && m_vulkanWindow) loading=m_vulkanWindow->isLoading();
+#endif
+    if(m_actClear) m_actClear->setEnabled(m_modelOpen && !loading);
     if (m_actOpenGL) m_actOpenGL->setEnabled(!m_modelOpen);
     if (m_actVulkan) m_actVulkan->setEnabled(!m_modelOpen &&
 #if defined(GL3D_HAS_VULKAN)
@@ -430,6 +446,23 @@ void MainWindow::updateBackendUi() {
 #endif
     m_actUndo->setEnabled(canUndo);
     m_actRedo->setEnabled(canRedo);
+}
+
+void MainWindow::clearScene() {
+#if defined(GL3D_HAS_VULKAN)
+    if(m_vulkanBackend && m_vulkanWindow) m_vulkanWindow->clearModel();
+    else
+#endif
+        m_glWidget->deleteModel();
+    activeView()->setTransformMode(0);
+    if(m_curTransform) m_curTransform->setChecked(false);
+    m_curTransform=nullptr;
+    for(QAction* action:{m_actMove,m_actRot,m_actScale,m_actDelete}) action->setVisible(false);
+    m_modelOpen=false;
+    m_modelInfo->setText(QStringLiteral("\u672a\u52a0\u8f7d\u6a21\u578b"));
+    m_loadProgress->setVisible(false);
+    m_fpsLabel->clear();
+    updateBackendUi();
 }
 
 // 操作器按钮互斥 选中新按钮时取消另两个勾选 再点当前按钮则取消

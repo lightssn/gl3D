@@ -33,8 +33,18 @@ GLWidget::GLWidget(QWindow* parent) : QOpenGLWindow(QOpenGLWindow::NoPartialUpda
     m_renderTimer = new QTimer(this);
     m_renderTimer->setTimerType(Qt::PreciseTimer);
     m_renderTimer->setInterval(16); //约60 FPS，只触发按需重绘
-    connect(m_renderTimer, &QTimer::timeout, this, QOverload<>::of(&GLWidget::update));
+    connect(m_renderTimer, &QTimer::timeout, this, [this] {
+        if(!m_scene.tiled() || m_scene.needsTileRedraw()) update();
+    });
     qRegisterMetaType<DebugSnapshot>("DebugSnapshot");
+    m_idleFpsTimer=new QTimer(this);
+    m_idleFpsTimer->setSingleShot(true);
+    m_idleFpsTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_idleFpsTimer,&QTimer::timeout,this,[this] {
+        if(m_frameTimer.elapsed()>=1000) {
+            m_lastFps=0; m_frameCount=0; emit fpsUpdated(0);
+        }
+    });
 
     //后台加载线程 解析在worker线程 跨线程信号按队列转发
     qRegisterMetaType<Mesh>("Mesh");
@@ -140,9 +150,9 @@ void GLWidget::paintGL() {
         m_renderer->syncTiles(m_scene);
         syncTileBounds();
         // 任务完成与过期回收必须继续推进，固定帧率模式由定时器驱动。
-        if(!m_fixedFps) update();
+        if(!m_fixedFps && m_scene.needsTileRedraw()) update();
     }
-    if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; return; }
+    if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; m_idleFpsTimer->start(1000); return; }
 
     const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()));
     const QMatrix4x4& view = frame.view;
@@ -195,6 +205,7 @@ void GLWidget::paintGL() {
     if (m_showAxes) drawAxesHud(view);
     m_depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
     m_lastDrawCalls = m_frameDrawCalls;
+    m_idleFpsTimer->start(1000);
     if (m_frameCount % 8 == 0) emit debugUpdated(collectDebugSnapshot());
     }//paintGL
 
@@ -648,6 +659,8 @@ void GLWidget::deleteModel() {
     releaseOverlay(m_tileBoundsMesh);
     doneCurrent();
     m_scene.clear();
+    m_tileEdits.clear();
+    m_idleFpsTimer->stop();
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);

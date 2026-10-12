@@ -13,6 +13,7 @@ struct RenderOptions {
     bool normalMap = true;
     bool wireframe = false;
     bool tileLevelTint = false;
+    bool osgbOnDemand = true;
     bool showTileBounds = false;
     bool fixedFps = false;
     int targetFps = 60;

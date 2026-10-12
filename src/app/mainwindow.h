@@ -28,6 +28,7 @@ class MainWindow : public QMainWindow {
 
     void setBackend(bool vulkan);
     void updateBackendUi();
+    void clearScene();
     RenderView* activeView() const;
     GLWidget* m_glWidget = nullptr;
     QWidget* m_viewContainer = nullptr;
@@ -53,6 +54,7 @@ class MainWindow : public QMainWindow {
     QAction* m_actShowStatusBar = nullptr; // 右键菜单项 状态栏
     QAction* m_actDebug = nullptr;
     QAction* m_actOpenGL = nullptr;
+    QAction* m_actClear = nullptr;
     QAction* m_actVulkan = nullptr;
     QActionGroup* m_backendGroup = nullptr;
     QToolButton* m_backendButton = nullptr;

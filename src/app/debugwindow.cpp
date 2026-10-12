@@ -90,35 +90,48 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
     connect(m_upAxis, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
         [this](int index) { m_renderView->setUpAxis(index == 1 ? UpAxis::Z : UpAxis::Y); });
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
-    m_tileBounds=new QCheckBox(QStringLiteral("\u663e\u793a\u74e6\u7247\u5916\u6846"),viewBox);
-    viewLayout->addWidget(m_tileBounds,2,0,1,2);
-    connect(m_tileBounds,&QCheckBox::toggled,this,[this](bool enabled) { m_renderView->setTileBounds(enabled); });
 
-    auto* levelsBox = new QGroupBox(QStringLiteral("\u91d1\u5b57\u5854\u5c42\u7ea7\uff08\u5df2\u53d1\u73b0\uff09"), content);
+    auto* levelsBox = m_levelsBox = new QGroupBox(QStringLiteral("\u91d1\u5b57\u5854\u5c42\u7ea7\uff08\u5df2\u53d1\u73b0\uff09"), content);
+    m_osgbBox=new QGroupBox("OSGB",content);
+    auto* osgbLayout=new QVBoxLayout(m_osgbBox);
+    m_onDemand=new QCheckBox(QStringLiteral("\u6309\u9700\u6a21\u5f0f"),m_osgbBox);
+    m_onDemand->setChecked(view->scene().options().osgbOnDemand);
+    m_onDemand->setToolTip(QStringLiteral("\u89c6\u91ce\u5185\u74e6\u7247\u52a0\u8f7d\u548c\u4e0a\u4f20\u5b8c\u6210\u540e\u505c\u6b62\u91cd\u7ed8\uff0c\u7528\u6237\u64cd\u4f5c\u540e\u6062\u590d\u3002"));
+    osgbLayout->addWidget(m_onDemand); layout->addWidget(m_osgbBox);
+    m_tileBounds=new QCheckBox(QStringLiteral("\u663e\u793a\u74e6\u7247\u5916\u6846"),m_osgbBox);
+    osgbLayout->addWidget(m_tileBounds);
+    connect(m_tileBounds,&QCheckBox::toggled,this,[this](bool enabled) { m_renderView->setTileBounds(enabled); });
+    m_osgbBox->setVisible(view->scene().tiled());
+    connect(m_onDemand,&QCheckBox::toggled,this,[this](bool enabled) {
+        m_renderView->scene().options().osgbOnDemand=enabled;
+        m_renderView->requestRedraw();
+    });
     auto* levelsLayout = new QVBoxLayout(levelsBox);
-    auto* levelsHint = new QLabel(QStringLiteral("\u7ec6\u5c42\u968f\u5206\u9875\u52a0\u8f7d\u9010\u6b65\u53d1\u73b0\u3002L0 \u6700\u7c97\uff1b\u8ddd\u79bb\u4f7f\u7528\u6a21\u578b\u5355\u4f4d\uff0c\u50cf\u7d20 LOD \u4f7f\u7528 px\u3002\n\u53d6\u6d88\u52fe\u9009\u9690\u85cf\u8be5\u5c42\uff0c\u4ecd\u53ef\u8bbf\u95ee\u66f4\u7ec6\u5c42\u3002"), levelsBox);
-    levelsHint->setWordWrap(true); levelsLayout->addWidget(levelsHint);
+    levelsBox->setToolTip(QStringLiteral("\u7ec6\u5c42\u968f\u5206\u9875\u52a0\u8f7d\u9010\u6b65\u53d1\u73b0\u3002L0 \u6700\u7c97\uff1b\u8ddd\u79bb\u4f7f\u7528\u6a21\u578b\u5355\u4f4d\uff0c\u50cf\u7d20 LOD \u4f7f\u7528 px\u3002\n\u53d6\u6d88\u52fe\u9009\u9690\u85cf\u8be5\u5c42\uff0c\u4ecd\u53ef\u8bbf\u95ee\u66f4\u7ec6\u5c42\u3002"));
+    levelsBox->setVisible(view->scene().tiled());
     m_levelTint = new QCheckBox(QStringLiteral("\u6309\u5c42\u7ea7\u53e0\u52a0\u534a\u900f\u660e\u989c\u8272"),levelsBox);
-    connect(m_levelTint,&QCheckBox::toggled,this,[this](bool enabled) { m_renderView->scene().options().tileLevelTint=enabled; });
+    connect(m_levelTint,&QCheckBox::toggled,this,[this](bool enabled) { m_renderView->scene().options().tileLevelTint=enabled; m_renderView->requestRedraw(); });
     levelsLayout->addWidget(m_levelTint);
     m_levels = new QTableWidget(0,3,levelsBox);
     m_levels->setHorizontalHeaderLabels({QStringLiteral("\u5c42\u7ea7"),QStringLiteral("\u6700\u8fd1"),QStringLiteral("\u6700\u8fdc")});
     m_levels->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_levels->verticalHeader()->hide(); m_levels->setMinimumHeight(110); m_levels->setMaximumHeight(210);
     m_levels->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_levels->setToolTip(levelsBox->toolTip());
     levelsLayout->addWidget(m_levels);
     auto* resetLevels = new QPushButton(QStringLiteral("\u6062\u590d\u539f\u59cb LOD \u8bbe\u7f6e"),levelsBox);
-    connect(resetLevels,&QPushButton::clicked,this,[this] { m_renderView->scene().resetTileLevels(); refreshTileLevels(); });
+    connect(resetLevels,&QPushButton::clicked,this,[this] { m_renderView->scene().resetTileLevels(); m_renderView->requestRedraw(); refreshTileLevels(); });
     levelsLayout->addWidget(resetLevels); layout->addWidget(levelsBox);
 
-    auto* cacheBox=new QGroupBox(QStringLiteral("\u74e6\u7247\u7f13\u5b58"),content);
+    auto* cacheBox=m_cacheBox=new QGroupBox(QStringLiteral("\u74e6\u7247\u7f13\u5b58"),content);
+    cacheBox->setVisible(view->scene().tiled());
     auto* cacheLayout=new QGridLayout(cacheBox);
     m_cacheBudget=new QSpinBox(cacheBox); m_cacheBudget->setRange(1,65536); m_cacheBudget->setValue(1024); m_cacheBudget->setSuffix(" MiB");
     cacheLayout->addWidget(new QLabel(QStringLiteral("CPU + GPU \u6570\u636e\u9884\u7b97"),cacheBox),0,0); cacheLayout->addWidget(m_cacheBudget,0,1);
     m_cacheEviction=new QCheckBox(QStringLiteral("\u8d85\u9884\u7b97\u65f6\u4f18\u5148\u56de\u6536\u6df1\u5c42\u95f2\u7f6e\u9875"),cacheBox);
     m_cacheEviction->setToolTip(QStringLiteral("\u9ed8\u8ba4\u4e0d\u56de\u6536\uff1b\u542f\u7528\u540e\u4fdd\u62a4\u5f53\u524d\u9700\u8981\u3001\u52a0\u8f7d\u4e2d\u548c\u9009\u4e2d\u7684\u9875\u3002\u9884\u7b97\u4e0d\u662f\u8fdb\u7a0b\u5185\u5b58\u4e0a\u9650\u3002"));
     cacheLayout->addWidget(m_cacheEviction,1,0,1,2);
-    auto policy=[this] { m_renderView->scene().setTileCachePolicy(qint64(m_cacheBudget->value())*1024*1024,m_cacheEviction->isChecked()); };
+    auto policy=[this] { m_renderView->scene().setTileCachePolicy(qint64(m_cacheBudget->value())*1024*1024,m_cacheEviction->isChecked()); m_renderView->requestRedraw(); };
     connect(m_cacheEviction,&QCheckBox::toggled,this,policy); connect(m_cacheBudget,qOverload<int>(&QSpinBox::valueChanged),this,policy);
     m_memoryLabel=new QLabel(cacheBox); m_memoryLabel->setWordWrap(true); cacheLayout->addWidget(m_memoryLabel,2,0,1,2);
     layout->addWidget(cacheBox);
@@ -214,6 +227,10 @@ void DebugWindow::setNightMode(bool night) {
 
 void DebugWindow::refresh() {
     if (!isVisible()) return;
+    m_osgbBox->setVisible(m_renderView->scene().tiled());
+    m_levelsBox->setVisible(m_renderView->scene().tiled());
+    m_cacheBox->setVisible(m_renderView->scene().tiled());
+    { QSignalBlocker blocker(m_onDemand); m_onDemand->setChecked(m_renderView->scene().options().osgbOnDemand); }
     m_tileBounds->setEnabled(m_renderView->scene().tiled());
     const DebugSnapshot s = m_renderView->debugSnapshot();
     m_cacheEviction->setEnabled(m_renderView->scene().tiled()); m_cacheBudget->setEnabled(m_renderView->scene().tiled());
@@ -332,11 +349,13 @@ void DebugWindow::applyTileLevel(int row,bool overrideRange) {
        std::abs(maximum->value()-std::min(1e30,double(setting.maxRange)))<0.0051) return;
     if(!overrideRange) {
         m_renderView->scene().setTileLevel(row,enabled->isChecked(),setting.minRange,setting.maxRange,setting.overridden);
+        m_renderView->requestRedraw();
         return;
     }
     const float high=maximum->value()>=1e30 ? std::numeric_limits<float>::max() : float(maximum->value());
     if(minimum->value()>=high) { refreshTileLevels(); return; }
     m_renderView->scene().setTileLevel(row,enabled->isChecked(),float(minimum->value()),high,overrideRange || levels[size_t(row)].overridden);
+    m_renderView->requestRedraw();
 }
 
 void DebugWindow::refreshTileLevels() {

@@ -36,6 +36,7 @@ public:
     bool visible(int owner) const;
     void setVisible(int owner, bool value);
     const TileStats& stats() const { return m_stats; }
+    bool needsUpdate() const;
     const std::vector<TileLevelSettings>& levels() const { return m_levels; }
     void setLevel(int level, bool enabled, float minimum, float maximum, bool overrideRange);
     void resetLevels();
@@ -44,6 +45,7 @@ public:
     static TileStats memoryUsage(const Mesh& mesh);
     static bool sphereVisible(const QMatrix4x4& clip, const QVector3D& center, float radius);
 private:
+    bool m_pendingUploads = false;
     struct Request { std::shared_ptr<TileNode> node; float centerDistance, pixels; };
     struct Result { std::shared_ptr<TileNode> node; QString error; };
     struct Job { std::shared_ptr<TileNode> target; std::future<Result> result; std::shared_ptr<std::atomic_bool> cancel; std::shared_ptr<PageMemory> memory; };

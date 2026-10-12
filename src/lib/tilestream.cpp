@@ -15,6 +15,12 @@ TileStream::TileStream(Mesh& mesh) : m_root(mesh.tileRoot) {
     install(mesh, m_root, -1);
 }
 TileStream::~TileStream() { for(auto& job:m_jobs) job.cancel->store(true); }
+bool TileStream::needsUpdate() const {
+    if(m_pendingUploads || m_stats.queued>0) return true;
+    return std::any_of(m_jobs.begin(),m_jobs.end(),[&](const auto& job) {
+        return !job.cancel->load() && job.target->lastVisitedFrame==m_frame;
+    });
+}
 QMatrix4x4 TileStream::transform(int owner) const {
     auto it=m_transforms.find(owner); return it==m_transforms.end()?QMatrix4x4():it->second;
 }
@@ -142,6 +148,8 @@ void TileStream::visit(Mesh& mesh,const std::shared_ptr<TileNode>& node,
         :radius*viewport.height()/(std::tan(camera.fov()*0.0087266463f)*distance);
     node->lastUsed=m_clock.elapsed();
     node->lastVisitedFrame=m_frame;
+    for(int slot:node->renderSlots)
+        if(mesh.subMeshes[size_t(slot)].resident && !mesh.subMeshes[size_t(slot)].uploaded) m_pendingUploads=true;
     if(!node->loaded) {
         // Walk the retained index first, even if this page's resources are gone.
         // A fine page can then be requested without rereading its ancestors.
@@ -261,6 +269,7 @@ TileStats TileStream::memoryUsage(const Mesh& mesh) {
 
 void TileStream::update(Mesh& mesh,const Camera& camera,const QSize& viewport,int selected) {
     ++m_frame;
+    m_pendingUploads=false;
     const float aspect=viewport.height()>0?float(viewport.width())/viewport.height():1.f;
     const auto clip=camera.projMatrix(aspect)*camera.viewMatrix();
     for(auto& part:mesh.subMeshes) part.drawable=false;

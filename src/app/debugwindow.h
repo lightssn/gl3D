@@ -1,7 +1,7 @@
 #pragma once
 #include "debugstats.h"
 #include <QWidget>
-class QLabel; class QTableWidget; class FrameGraph; class RenderView; class QTimer; class QListWidget; class QShowEvent; class QDoubleSpinBox; class QCheckBox; class QComboBox; class QSpinBox;
+class QLabel; class QTableWidget; class FrameGraph; class RenderView; class QTimer; class QListWidget; class QShowEvent; class QDoubleSpinBox; class QCheckBox; class QComboBox; class QSpinBox; class QGroupBox;
 class DebugWindow : public QWidget {
     Q_OBJECT
 public:
@@ -17,8 +17,10 @@ private:
     void applyTileLevel(int row, bool overrideRange);
     RenderView* m_renderView; QLabel* m_driverLabel; QLabel* m_cameraLabel; QLabel* m_timingLabel;
     QTableWidget* m_levels;
+    QGroupBox* m_levelsBox;
     QCheckBox* m_levelTint;
     QCheckBox* m_cacheEviction;
+    QGroupBox* m_cacheBox;
     QSpinBox* m_cacheBudget;
     QLabel* m_memoryLabel;
     QTableWidget* m_resources; FrameGraph* m_graph; QTimer* m_timer;
@@ -28,6 +30,8 @@ private:
     QComboBox* m_debugView;
     QComboBox* m_upAxis;
     QCheckBox* m_tileBounds;
+    QGroupBox* m_osgbBox;
+    QCheckBox* m_onDemand;
     QSpinBox* m_fpsSpin;
     int m_subMeshCount = -1;
 };
