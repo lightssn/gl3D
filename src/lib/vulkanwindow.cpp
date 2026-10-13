@@ -57,7 +57,8 @@ struct alignas(16) DrawUniform {
     float tileTint[4];
 };
 static_assert(sizeof(DrawUniform) == 192, "Vulkan UBO must match std140 layout");
-struct PushConstants { int mode = 0; float outline = 0.0f; };
+struct PushConstants { int mode = 0; float outline = 0.0f; float viewport[2] = {1.0f, 1.0f}; };
+static_assert(sizeof(PushConstants) == 16, "Vulkan push constants must match DrawMode");
 struct OverlayVertex { float position[3]; float color[3]; };
 struct SingleSampleTarget {
     VkImage depth = VK_NULL_HANDLE;
@@ -353,6 +354,8 @@ public:
                 m_df->vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
             }
             PushConstants constants{};
+            constants.viewport[0] = float(size.width());
+            constants.viewport[1] = float(size.height());
             m_df->vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                      0, sizeof(constants), &constants);
             if (m_drawOrderDirty || m_drawOrder.size() != size_t(m_ranges.size())) {
@@ -399,14 +402,12 @@ public:
                 m_df->vkCmdDrawIndexed(cmd, range.indexCount, 1, range.firstIndex, range.vertexOffset, 0);
                 ++drawCalls;
             }
-            if (selected >= 0 && m_window->transformMode() && overlayPipeline && m_overlayBuffer) {
+            if (selected >= 0 && options.showGizmo && m_window->transformMode() && overlayPipeline && m_overlayBuffer) {
                 const auto& centers = m_window->scene().selection().centers();
                 const QVector3D position = m_window->subMeshTransform(selected).map(centers[size_t(selected)]);
-                QMatrix4x4 model;
-                model.translate(position);
-                if (m_window->transformMode() == 3) model.rotate(m_window->subMeshRotation(selected));
-                model.scale(m_window->gizmoRadius());
-                const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() * frame.projection * frame.view * model;
+                QMatrix4x4 gizmo = makeGizmoMatrix(frame.view, frame.projection, position, m_window->size());
+                if (m_window->transformMode() == 3) gizmo.rotate(m_window->subMeshRotation(selected));
+                const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() * gizmo;
                 float pushMatrix[16];
                 std::memcpy(pushMatrix, mvp.constData(), sizeof(pushMatrix));
                 m_df->vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline);
@@ -1667,15 +1668,14 @@ void VulkanWindow::updateTiles() {
     m_transforms.resize(parts.size()); m_bounds.resize(parts.size()); m_visible.resize(parts.size(),true);
     for(size_t i=0;i<parts.size();++i) {
         m_bounds[i]={parts[i].boundsMin,parts[i].boundsMax};
-        auto it=m_tileEdits.find(parts[i].tileOwner);
-        m_transforms[i]=it==m_tileEdits.end()?TransformState():it->second;
+        m_transforms[i]=m_edit.tileState(parts[i].tileOwner);
     }
 }
 
 void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
 {
     m_scene.setMesh(std::move(mesh), path);
-    m_tileEdits.clear();
+    m_edit.reset();
     if(m_scene.tiled()) { m_scene.options().pbr=false; m_scene.options().normalMap=false; }
     m_bounds.clear();
     m_visible.assign(m_scene.mesh().subMeshes.size(), true);
@@ -1693,8 +1693,6 @@ void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
         }
         m_bounds.push_back(bounds);
     }
-    m_undo.clear();
-    m_redo.clear();
     m_pendingPick = QPoint(-1, -1);
     m_scene.options().outlineWidth = RenderOptions{}.outlineWidth;
     emit selectionChanged(false);
@@ -1708,15 +1706,12 @@ void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path)
 
 void VulkanWindow::clearModel()
 {
-    m_tileEdits.clear();
+    m_edit.reset();
     m_idleFpsTimer.stop();
     ++m_gridRevision;
     m_scene.clear();
     m_bounds.clear();
     m_visible.clear();
-    m_transforms.clear();
-    m_undo.clear();
-    m_redo.clear();
     m_pendingPick = QPoint(-1, -1);
     emit selectionChanged(false);
     emit historyChanged(false, false);

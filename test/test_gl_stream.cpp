@@ -7,6 +7,8 @@
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QDebug>
+#include <QDir>
+#include <QFileInfo>
 #include <QThread>
 
 // 离屏验证增量上传、共享纹理、整瓦片筛选和资源释放。
@@ -20,7 +22,48 @@ int main(int argc, char** argv) {
     }
     int result=0;
     {
+        // 编译实际模型着色器，覆盖像素描边的GLSL和uniform变更。
+        Shader modelShader;
+        const QString shaderPath = QFileInfo(QString::fromUtf8(__FILE__)).dir().absoluteFilePath("../src/app/shaders/model.glsl");
+        if (!modelShader.loadFromCombinedFile(shaderPath)) return 1;
         auto& gl=GLFunctions::instance();
+        {
+            // 实际光栅化比较外扩前后的位置，覆盖透视、正交和非均匀缩放。
+            Mesh outlineMesh;
+            SubMesh triangle;
+            triangle.vertices={{-0.4f,-0.4f,0,1,0,0,0,0},{0.4f,-0.4f,0,1,0,0,0,0},{0,0.4f,0,1,0,0,0,0}};
+            triangle.indices={0,1,2}; outlineMesh.subMeshes.push_back(std::move(triangle));
+            MeshRenderer outlineRenderer; outlineRenderer.upload(outlineMesh);
+            QOpenGLFramebufferObject outlineFbo(128,128); outlineFbo.bind();
+            gl.glViewport(0,0,128,128); gl.glClearColor(0,0,0,1);
+            modelShader.bind();
+            modelShader.setVec3("uViewport",128,128,0);
+            modelShader.setInt("uFlatColor",1); modelShader.setVec4("uFlatColorValue",1,0,0,1);
+            for (bool perspective : {false,true}) for (float scale : {0.5f,1.0f,2.0f}) {
+                QMatrix4x4 model,view,projection;
+                model.scale(scale,scale*0.7f,scale*1.3f);
+                view.translate(0,0,-(scale+2.0f));
+                if(perspective) projection.perspective(60,1,0.1f,100);
+                else projection.ortho(-2,2,-2,2,0.1f,100);
+                outlineRenderer.setSubMeshTransform(0,model);
+                modelShader.setMat4("uView",view.constData()); modelShader.setMat4("uProj",projection.constData());
+                auto leftEdge = [&](float width) {
+                    gl.glClear(GL_COLOR_BUFFER_BIT); modelShader.setFloat("uOutline",width);
+                    outlineRenderer.render(modelShader);
+                    const QImage pixels=outlineFbo.toImage();
+                    int edge=128;
+                    for(int y=0;y<128;++y) for(int x=0;x<edge;++x)
+                        if(pixels.pixelColor(x,y).red()>200) { edge=x; break; }
+                    return edge;
+                };
+                const int original=leftEdge(0), expanded=leftEdge(4);
+                if(original==128 || expanded-original!=4) {
+                    qCritical()<<"Pixel outline changed with projection/scale"<<perspective<<scale<<original<<expanded;
+                    result=9;
+                }
+            }
+            modelShader.unbind(); outlineFbo.release();
+        }
         Mesh mesh; mesh.bboxMin={-1,-1,-1}; mesh.bboxMax={1,1,1};
         mesh.tileRoot=std::make_shared<TileNode>(); mesh.tileRoot->owner=0; mesh.tileRoot->radius=2;
         QImage texture(2,2,QImage::Format_RGBA8888); texture.fill(Qt::red);

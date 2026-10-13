@@ -9,13 +9,13 @@
 #include "selectioncontroller.h"
 #include "renderscene.h"
 #include "renderview.h"
+#include "editcontroller.h"
 #include <QOpenGLWindow>
 #include <QElapsedTimer>
 #include <QQuaternion>
 #include <QVector3D>
 #include <vector>
 #include <memory>
-#include <map>
 
 class Shader;//前向声明，cpp再引入头文件，改动后编译更快
 class MeshRenderer;
@@ -52,14 +52,17 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
         OverlayMesh m_gizmoMesh;      //模型中央操作器
         TransformMode m_transformMode = None;
+        bool m_gizmoDirty = false;
         OverlayMesh m_tileBoundsMesh;
         uint64_t m_tileBoundsRevision = 0;
         int& m_selectedSubMesh = m_scene.selection().indexRef();
 
         //模型变换 T(c+pos)*R*S*T(-c) 绕模型中心旋转缩放 三模式共享
-        QVector3D m_transformPos{0, 0, 0};
-        QQuaternion m_transformRot;
-        QVector3D m_transformScale{1, 1, 1};
+        using TransformState = EditTransform;
+        EditController m_edit;
+        QVector3D& m_transformPos = m_edit.current().position;
+        QQuaternion& m_transformRot = m_edit.current().rotation;
+        QVector3D& m_transformScale = m_edit.current().scale;
         QMatrix4x4 m_modelMatrix;     //合成后的uModel 变换时刷新
 
         //操作器拖拽状态 按下命中轴开始 移动变换 松开结束
@@ -69,11 +72,6 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         QVector3D m_dragCenter;       //拖拽参考点 变换后的模型中心
 
         //变换历史 撤销/重做 每次拖拽前的状态入撤销栈
-        struct TransformState { QVector3D pos; QQuaternion rot; QVector3D scale; };
-        std::map<int, TransformState> m_tileEdits;
-        std::vector<TransformState> m_undoStack;
-        std::vector<TransformState> m_redoStack;
-        TransformState m_dragStartState; //当前拖拽起点 松开时对比是否变化
         std::vector<QVector3D>& m_subMeshCenters = m_scene.selection().centers();
 
         //后台加载 解析在worker线程 解析完主线程上传显存
@@ -161,7 +159,6 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         //缩放轴随模型旋转 平移/旋转保持世界轴向
         QVector3D gizmoAxisDir(int idx) const;
         TransformState currentTransform() const;
-        bool sameTransform(const TransformState& a, const TransformState& b) const;
         void applyTransform(const TransformState& s);
 
     public:
@@ -179,8 +176,8 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         bool isLoading() const { return m_loading; }
         void undo();                 //撤销上次变换
         void redo();                 //重做被撤销的变换
-        bool canUndo() const { return !m_undoStack.empty(); }
-        bool canRedo() const { return !m_redoStack.empty(); }
+        bool canUndo() const { return m_edit.canUndo(); }
+        bool canRedo() const { return m_edit.canRedo(); }
 
         void setOrtho(bool on);          //true正交 false透视
         void setTransformMode(int mode); //0无 1平移 2旋转 3缩放

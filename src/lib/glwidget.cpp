@@ -24,7 +24,7 @@
 static const float kPi = 3.14159265f;
 
 //着色器源码外置为独立文件(exe同目录shaders/) 仿UE引擎.usf加载 改动免重编译
-//model.glsl 模型Blinn-Phong头灯 uFlatColor=1纯色(描边/蒙版/拾取) uOutline>0沿法线挤出
+//model.glsl 模型Blinn-Phong头灯 uFlatColor=1纯色(描边/蒙版/拾取) uOutline>0按屏幕像素外扩
 //overlay.glsl 线段 网格/坐标轴/操作器共用
 
 GLWidget::GLWidget(QWindow* parent) : QOpenGLWindow(QOpenGLWindow::NoPartialUpdate, parent) {
@@ -160,6 +160,7 @@ void GLWidget::paintGL() {
         if(!m_fixedFps && m_scene.needsTileRedraw()) update();
     }
     if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; m_idleFpsTimer->start(1000); return; }
+    if(m_gizmoDirty) { rebuildGizmo(); m_gizmoDirty=false; }
 
     const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()));
     const QMatrix4x4& view = frame.view;
@@ -171,6 +172,7 @@ void GLWidget::paintGL() {
     m_shader->bind();
     m_shader->setMat4("uView", view.constData());
     m_shader->setMat4("uProj", proj.constData());
+    m_shader->setVec3("uViewport", float(m_fbW), float(m_fbH), 0.0f);
     m_shader->setFloat("uOutline", 0.0f);
     m_shader->setInt("uFlatColor", 0);
     m_shader->setInt("uDebugView", m_debugView);
@@ -340,7 +342,7 @@ void GLWidget::buildAxesMesh() {
 void GLWidget::rebuildGizmo() {
     if (!m_overlayShader || !m_overlayShader->isValid()) return;
     std::vector<OverlayVertex> verts;
-    float s = m_mesh.radius() * 1.2f;
+    const float s = 1.0f; // 单位操作器，绘制时换算成固定屏幕大小。
     QVector3D red(0.95f, 0.25f, 0.25f), green(0.25f, 0.95f, 0.25f), blue(0.3f, 0.5f, 1.0f);
     QVector3D x(1, 0, 0), y(0, 1, 0), z(0, 0, 1);
     if (m_transformMode == Translate) {
@@ -450,8 +452,8 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     m_renderer->render(*m_shader, m_selectedSubMesh);
     gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-    //2 沿法线膨胀画红边 只画stencil未覆盖的外缘
-    //保持深度测试 膨胀外缘比原表面更近 通过 而模型前方网格已写入更近深度 遮挡红边
+    //2 按投影法线外扩指定像素画红边，只画stencil未覆盖的外缘。
+    //保留原顶点深度，前方已有的模型继续遮挡红边。
     m_shader->setFloat("uOutline", m_outlineWidth);
     m_shader->setVec4("uFlatColorValue", 0.9f, 0.1f, 0.1f, 1.0f);
     gl.glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
@@ -475,9 +477,8 @@ void GLWidget::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     }
 
 void GLWidget::drawGizmo(const QMatrix4x4& proj, const QMatrix4x4& view) {
-    QMatrix4x4 mvp = proj * view;
     const QVector3D center = m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center();
-    mvp.translate(center + m_transformPos); //操作器定位在选中子网格中央
+    const QMatrix4x4 mvp = makeGizmoMatrix(view, proj, center + m_transformPos, size());
     drawOverlay(m_gizmoMesh, mvp, true, QVector3D());
     }
 
@@ -618,7 +619,8 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
         return;
         }
     m_scene.setMesh(mesh, m_currentPath);
-    m_tileEdits.clear();
+    m_edit.reset();
+    if(!m_scene.tiled()) m_edit.states().resize(m_mesh.subMeshes.size());
     if(m_scene.tiled()) { m_pbr=false; m_normalMap=false; }
     makeCurrent();
     if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
@@ -630,8 +632,6 @@ void GLWidget::onLoadFinished(bool ok, const QString& err, const Mesh& mesh) {
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
     m_dragAxis = 0;
-    m_undoStack.clear();
-    m_redoStack.clear();
     emit historyChanged(false, false);
     updateModelMatrix();
     m_selectedSubMesh = -1;
@@ -682,18 +682,16 @@ void GLWidget::deleteModel() {
         doneCurrent();
     }
     m_scene.clear();
-    m_tileEdits.clear();
+    m_edit.reset();
     m_idleFpsTimer->stop();
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
     m_dragAxis = 0;
     m_transformMode = None;
-    m_undoStack.clear();
-    m_redoStack.clear();
     emit historyChanged(false, false);
     m_selectedSubMesh = -1;
-    emit selectionChanged(false); //联动隐藏操作器与删除按钮
+    emit selectionChanged(false); //联动隐藏操作器
     emit modelCleared();
     update();
     }
@@ -762,13 +760,13 @@ void GLWidget::selectSubMesh(int index) {
     m_transformPos = QVector3D();
     m_transformRot = QQuaternion();
     m_transformScale = QVector3D(1, 1, 1);
-    m_undoStack.clear();
-    m_redoStack.clear();
+    m_edit.clearHistory();
     if(m_scene.tiled() && index>=0) {
         const int owner=m_mesh.subMeshes[size_t(index)].tileOwner;
-        auto it=m_tileEdits.find(owner);
-        if(it!=m_tileEdits.end()) { m_transformPos=it->second.pos; m_transformRot=it->second.rot; m_transformScale=it->second.scale; }
+        m_edit.current()=m_edit.tileState(owner);
     }
+    if(!m_scene.tiled()) m_edit.selectState(index);
+    m_gizmoDirty=true;
     updateModelMatrix();
     emit historyChanged(false, false);
     emit selectionChanged(m_selectedSubMesh >= 0);
@@ -828,28 +826,20 @@ void GLWidget::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); up
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移
 void GLWidget::updateModelMatrix() {
-    QMatrix4x4 m;
     QVector3D c = m_selectedSubMesh >= 0 && m_selectedSubMesh < static_cast<int>(m_subMeshCenters.size())
         ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center();
-    m.translate(c + m_transformPos);
-    m.rotate(m_transformRot);
-    m.scale(m_transformScale);
-    m.translate(-c);
-    m_modelMatrix = m;
+    m_modelMatrix = currentTransform().matrix(c);
     if(m_scene.tiled()) {
         if(m_selectedSubMesh>=0) {
             m_scene.setTileTransform(m_selectedSubMesh,m_modelMatrix);
-            m_tileEdits[m_mesh.subMeshes[size_t(m_selectedSubMesh)].tileOwner]=currentTransform();
+            m_edit.setTileState(m_mesh.subMeshes[size_t(m_selectedSubMesh)].tileOwner,currentTransform());
         }
         return;
     }
-    if (m_renderer) {
-        QMatrix4x4 identity;
-        identity.setToIdentity();
-        for (int i = 0; i < subMeshCount(); ++i)
-            m_renderer->setSubMeshTransform(i, identity);
-        if (m_selectedSubMesh >= 0)
-            m_renderer->setSubMeshTransform(m_selectedSubMesh, m_modelMatrix);
+    // Selection only controls the gizmo; every submesh retains its own edit.
+    if(m_selectedSubMesh>=0) {
+        m_edit.storeState(m_selectedSubMesh);
+        if(m_renderer) m_renderer->setSubMeshTransform(m_selectedSubMesh,m_modelMatrix);
     }
     }
 
@@ -929,50 +919,41 @@ float GLWidget::gizmoAngle(const QPoint& pos, int axis) {
 
 //命中测试 逐轴将手柄投影到屏幕 取像素距离最近且小于阈值的轴
 int GLWidget::gizmoHitAxis(const QPoint& pos) {
-    if (m_transformMode == None || !hasModel()) return 0;
-    const float s = m_mesh.radius() * 1.2f;
-    const QVector3D center = (m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
-    const QVector3D axes[3] = { {1, 0, 0}, {0, 1, 0}, {0, 0, 1} };
-    QMatrix4x4 view = m_camera.viewMatrix();
-    float aspect = m_fbH > 0 ? (float)m_fbW / m_fbH : 1.0f;
-    QMatrix4x4 proj = m_camera.projMatrix(aspect);
-    QVector3D origin, dir;
-    pickingRay(pos, origin, dir);
-    const float threshold = 14.0f; //像素命中半径
+    if (m_transformMode == None || !hasModel() || !m_showGizmo) return 0;
+    const QVector3D center = (m_selectedSubMesh >= 0 ? m_subMeshCenters[size_t(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
+    const auto frame = makeRenderFrame(m_scene, size());
+    const QMatrix4x4 matrix = makeGizmoMatrix(frame.view, frame.projection, center, size());
+    const QMatrix4x4 identity;
+    auto project = [&](const QVector3D& point) { return projectToScreen(matrix, identity, point); };
     int best = 0;
-    float bestDist = threshold;
-    for (int i = 0; i < 3; ++i) {
-        QVector3D axis = gizmoAxisDir(i + 1);
-        QPointF spt;
-        if (m_transformMode == Rotate) {
-            //圆环 取圆上离射线-平面交点最近点投影
-            QVector3D inter;
-            if (!rayPlaneInter(origin, dir, center, axis, inter)) continue;
-            QVector3D d = inter - center;
-            if (d.length() < 1e-5f) continue;
-            QVector3D onRing = center + d.normalized() * s;
-            spt = projectToScreen(proj, view, onRing);
-            }
-        else {
-            //箭头线段[center, center+axis*s] 取线段上离射线最近点投影
-            float param = 0;
-            if (!rayLineParam(origin, dir, center, axis, param)) continue;
-            param = std::clamp(param, 0.0f, s);
-            spt = projectToScreen(proj, view, center + axis * param);
-            }
-        QPointF dpt = spt - QPointF(pos.x(), pos.y());
-        float dist = std::sqrt(dpt.x() * dpt.x() + dpt.y() * dpt.y());
-        if (dist < bestDist) {
-            bestDist = dist;
-            best = i + 1;
-            }
+    float bestDistance = 14.0f;
+    auto checkSegment = [&](const QVector3D& a, const QVector3D& b, int axis) {
+        const QPointF start = project(a), line = project(b) - start;
+        const float lengthSquared = float(line.x()*line.x()+line.y()*line.y());
+        if(lengthSquared < 1.0f) return;
+        const QPointF relative = QPointF(pos) - start;
+        const float t = std::clamp(float((relative.x()*line.x()+relative.y()*line.y())/lengthSquared),0.0f,1.0f);
+        const QPointF error = relative - line*t;
+        const float distance = float(std::hypot(error.x(),error.y()));
+        if(distance < bestDistance) { bestDistance=distance; best=axis; }
+    };
+    for(int i=1;i<=3;++i) {
+        const QVector3D axis = gizmoAxisDir(i);
+        if(m_transformMode != Rotate) { checkSegment({},axis,i); continue; }
+        const QVector3D seed = std::fabs(axis.y()) > 0.99f ? QVector3D(1,0,0) : QVector3D(0,1,0);
+        const QVector3D tangent = QVector3D::crossProduct(axis,seed).normalized();
+        const QVector3D bitangent = QVector3D::crossProduct(axis,tangent);
+        for(int segment=0;segment<64;++segment) {
+            const float a=segment*2.0f*kPi/64, b=(segment+1)*2.0f*kPi/64;
+            checkSegment(tangent*std::cos(a)+bitangent*std::sin(a),tangent*std::cos(b)+bitangent*std::sin(b),i);
         }
-    return best;
     }
+    return best;
+}
 
 //按下手柄 初始化该模式拖拽参数
 void GLWidget::beginGizmoDrag(const QPoint& pos, int axis) {
-    m_dragStartState = currentTransform(); //撤销历史起点
+    m_edit.beginDrag(currentTransform()); //撤销历史起点
     m_dragCenter = (m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
     if (m_transformMode == Rotate) {
         m_prevDragParam = gizmoAngle(pos, axis);
@@ -998,16 +979,14 @@ void GLWidget::dragGizmo(const QPoint& pos) {
         pickingRay(pos, origin, dir);
         float param = 0;
         if (!rayLineParam(origin, dir, m_dragCenter, axis, param)) return;
-        m_transformPos += axis * (param - m_prevDragParam);
+        EditController::translate(m_edit.current(),axis,param-m_prevDragParam);
         m_prevDragParam = param;
         }
     else if (m_transformMode == Rotate) {
         float ang = gizmoAngle(pos, m_dragAxis);
-        float delta = ang - m_prevDragParam;
-        if (delta > kPi) delta -= 2.0f * kPi; //极角跨±π补差
-        if (delta < -kPi) delta += 2.0f * kPi;
+        const float delta = EditController::angleDelta(ang,m_prevDragParam);
         m_prevDragParam = ang;
-        m_transformRot = QQuaternion::fromAxisAndAngle(axis, delta * 180.0f / kPi) * m_transformRot;
+        m_transformRot = EditController::rotate(m_transformRot,axis,delta*180.0f/kPi);
         }
     else if (m_transformMode == Scale) {
         QVector3D origin, dir;
@@ -1015,8 +994,7 @@ void GLWidget::dragGizmo(const QPoint& pos) {
         float param = 0;
         if (!rayLineParam(origin, dir, m_dragCenter, axis, param)) return;
         if (std::fabs(m_prevDragParam) < 1e-4f) return;
-        float ratio = std::clamp(std::fabs(param) / std::fabs(m_prevDragParam), 0.05f, 20.0f);
-        float v = m_dragInitScale * ratio;
+        const float v = EditController::rayScale(m_dragInitScale,param,m_prevDragParam);
         if (m_dragAxis == 1) m_transformScale.setX(v);
         else if (m_dragAxis == 2) m_transformScale.setY(v);
         else m_transformScale.setZ(v);
@@ -1027,30 +1005,16 @@ void GLWidget::dragGizmo(const QPoint& pos) {
 
 //轴方向 缩放模式随模型旋转对齐本地轴 平移/旋转保持世界轴向
 QVector3D GLWidget::gizmoAxisDir(int idx) const {
-    QVector3D a = idx == 1 ? QVector3D(1, 0, 0) : idx == 2 ? QVector3D(0, 1, 0) : QVector3D(0, 0, 1);
-    return m_transformMode == Scale ? m_transformRot.rotatedVector(a) : a;
+    return EditController::gizmoAxis(idx,m_transformMode==Scale,m_transformRot);
     }
 
 GLWidget::TransformState GLWidget::currentTransform() const {
-    return { m_transformPos, m_transformRot, m_transformScale };
+    return m_edit.current();
     }
 
-//状态近似相等 拖拽后无实际变化则不记历史
-bool GLWidget::sameTransform(const TransformState& a, const TransformState& b) const {
-    if ((a.pos - b.pos).length() > 1e-5f) return false;
-    if (std::fabs(a.scale.x() - b.scale.x()) > 1e-5f ||
-        std::fabs(a.scale.y() - b.scale.y()) > 1e-5f ||
-        std::fabs(a.scale.z() - b.scale.z()) > 1e-5f) return false;
-        const float dr = std::fabs(a.rot.x() - b.rot.x()) + std::fabs(a.rot.y() - b.rot.y()) +
-                         std::fabs(a.rot.z() - b.rot.z()) + std::fabs(a.rot.scalar() - b.rot.scalar());
-        return dr < 1e-5f;
-        }
-
-//套用历史状态 缩放模式手柄随旋转重建
+// Apply shared history state and refresh the window-owned overlays.
 void GLWidget::applyTransform(const TransformState& s) {
-    m_transformPos = s.pos;
-    m_transformRot = s.rot;
-    m_transformScale = s.scale;
+    m_edit.current() = s;
     updateModelMatrix();
     if (m_transformMode != None && m_overlayShader && m_overlayShader->isValid() && isValid()) {
         makeCurrent();
@@ -1061,20 +1025,18 @@ void GLWidget::applyTransform(const TransformState& s) {
     }
 
 void GLWidget::undo() {
-    if (m_undoStack.empty()) return;
-    m_redoStack.push_back(currentTransform());
-    applyTransform(m_undoStack.back());
-    m_undoStack.pop_back();
-    emit historyChanged(canUndo(), canRedo());
-    }
+    auto state=currentTransform();
+    if(!m_edit.undo(m_selectedSubMesh,state)) return;
+    applyTransform(state);
+    emit historyChanged(canUndo(),canRedo());
+}
 
 void GLWidget::redo() {
-    if (m_redoStack.empty()) return;
-    m_undoStack.push_back(currentTransform());
-    applyTransform(m_redoStack.back());
-    m_redoStack.pop_back();
-    emit historyChanged(canUndo(), canRedo());
-    }
+    auto state=currentTransform();
+    if(!m_edit.redo(m_selectedSubMesh,state)) return;
+    applyTransform(state);
+    emit historyChanged(canUndo(),canRedo());
+}
 
 void GLWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) m_leftDragDist = 0; //左键拖拽距离起点
@@ -1119,10 +1081,7 @@ void GLWidget::mouseReleaseEvent(QMouseEvent* event) {
     //操作器拖拽结束 不触发选中
     if (event->button() == Qt::LeftButton && m_dragAxis) {
         //起点与终点不同 入撤销栈 新操作清空重做栈
-        if (!sameTransform(m_dragStartState, currentTransform())) {
-            m_undoStack.push_back(m_dragStartState);
-            m_redoStack.clear();
-            }
+        m_edit.endDrag(m_selectedSubMesh,currentTransform(),EditController::ChangePolicy::ComponentTolerance);
         m_dragAxis = 0;
         m_dragButton = Qt::NoButton;
         emit historyChanged(canUndo(), canRedo());

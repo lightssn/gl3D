@@ -1,4 +1,5 @@
 #include "vulkanwindow.h"
+#include "renderframe.h"
 
 #if defined(GL3D_HAS_VULKAN)
 
@@ -14,7 +15,7 @@
 namespace {
 QVector3D axis(int index)
 {
-    return index == 1 ? QVector3D(1, 0, 0) : index == 2 ? QVector3D(0, 1, 0) : QVector3D(0, 0, 1);
+    return EditController::axis(index);
 }
 
 QPointF project(const QMatrix4x4& matrix, const QVector3D& point, const QSize& size)
@@ -105,8 +106,7 @@ void VulkanWindow::selectSubMesh(int index)
     if (m_scene.tiled() && index >= 0 && !m_scene.mesh().subMeshes[size_t(index)].resident) return;
     if (index == selectedSubMesh()) { emit subMeshSelected(index); return; }
     m_scene.selection().indexRef() = index;
-    m_undo.clear();
-    m_redo.clear();
+    m_edit.clearHistory();
     emit historyChanged(false, false);
     emit selectionChanged(index >= 0);
     emit subMeshSelected(index);
@@ -129,11 +129,7 @@ QMatrix4x4 VulkanWindow::subMeshTransform(int index) const
     const TransformState& state = m_transforms[size_t(index)];
     const auto& centers = m_scene.selection().centers();
     const QVector3D center = index < int(centers.size()) ? centers[size_t(index)] : m_scene.mesh().center();
-    matrix.translate(center + state.position);
-    matrix.rotate(state.rotation);
-    matrix.scale(state.scale);
-    matrix.translate(-center);
-    return matrix;
+    return state.matrix(center);
 }
 
 QQuaternion VulkanWindow::subMeshRotation(int index) const
@@ -145,17 +141,19 @@ QQuaternion VulkanWindow::subMeshRotation(int index) const
 float VulkanWindow::gizmoRadius() const
 {
     const Camera& camera = m_scene.cameraController().camera();
+    const int selected = selectedSubMesh();
+    if(selected < 0) return 0;
+    const QVector3D center = m_scene.selection().centers()[size_t(selected)] + m_transforms[size_t(selected)].position;
+    const float depth = -(camera.viewMatrix() * QVector4D(center,1)).z();
     const float halfHeight = camera.ortho() ? camera.distance() * 0.5f
-        : camera.distance() * std::tan(camera.fov() * 0.0087266463f);
-    return std::max(halfHeight * 180.0f / std::max(1, height()), 0.001f);
+        : std::max(depth,0.000001f) * std::tan(camera.fov() * 0.0087266463f);
+    return halfHeight * (2.0f * GizmoPixelRadius) / std::max(1, height());
 }
 
 QVector3D VulkanWindow::gizmoAxis(int index) const
 {
-    const QVector3D direction = axis(index);
     const int selected = selectedSubMesh();
-    return m_transformMode == 3 && selected >= 0
-        ? subMeshRotation(selected).rotatedVector(direction) : direction;
+    return EditController::gizmoAxis(index,m_transformMode==3 && selected>=0,subMeshRotation(selected));
 }
 
 void VulkanWindow::commitTileTransform() {
@@ -163,33 +161,23 @@ void VulkanWindow::commitTileTransform() {
     if(!m_scene.tiled() || index<0 || index>=int(m_transforms.size())) return;
     const auto& state=m_transforms[size_t(index)];
     const auto center=m_scene.selection().centers()[size_t(index)];
-    QMatrix4x4 matrix; matrix.translate(center+state.position); matrix.rotate(state.rotation);
-    matrix.scale(state.scale); matrix.translate(-center);
-    m_scene.setTileTransform(index,matrix);
-    m_tileEdits[m_scene.mesh().subMeshes[size_t(index)].tileOwner]=state;
+    m_scene.setTileTransform(index,state.matrix(center));
+    m_edit.setTileState(m_scene.mesh().subMeshes[size_t(index)].tileOwner,state);
 }
 
-void VulkanWindow::undo()
-{
-    const int index = selectedSubMesh();
-    if (index < 0 || m_undo.empty()) return;
-    m_redo.push_back(m_transforms[size_t(index)]);
-    m_transforms[size_t(index)] = m_undo.back();
-    m_undo.pop_back();
+void VulkanWindow::undo() {
+    const int index=selectedSubMesh();
+    if(index<0 || !m_edit.undo(index,m_transforms[size_t(index)])) return;
     commitTileTransform();
-    emit historyChanged(!m_undo.empty(), !m_redo.empty());
+    emit historyChanged(m_edit.canUndo(),m_edit.canRedo());
     requestUpdate();
 }
 
-void VulkanWindow::redo()
-{
-    const int index = selectedSubMesh();
-    if (index < 0 || m_redo.empty()) return;
-    m_undo.push_back(m_transforms[size_t(index)]);
-    m_transforms[size_t(index)] = m_redo.back();
-    m_redo.pop_back();
+void VulkanWindow::redo() {
+    const int index=selectedSubMesh();
+    if(index<0 || !m_edit.redo(index,m_transforms[size_t(index)])) return;
     commitTileTransform();
-    emit historyChanged(!m_undo.empty(), !m_redo.empty());
+    emit historyChanged(m_edit.canUndo(),m_edit.canRedo());
     requestUpdate();
 }
 
@@ -237,13 +225,12 @@ int VulkanWindow::pickSubMesh(const QPoint& pos) const
 int VulkanWindow::hitGizmo(const QPoint& pos) const
 {
     const int index = selectedSubMesh();
-    if (!m_transformMode || index < 0) return 0;
+    if (!m_transformMode || index < 0 || !m_scene.options().showGizmo) return 0;
     const QSize size = this->size();
     const Camera& camera = m_scene.cameraController().camera();
-    const QMatrix4x4 viewProjection = camera.projMatrix(float(size.width()) / std::max(1, size.height())) * camera.viewMatrix();
     const QVector3D center = m_scene.selection().centers()[size_t(index)] + m_transforms[size_t(index)].position;
-    const float radius = gizmoRadius();
-    const QPointF start = project(viewProjection, center, size);
+    const QMatrix4x4 gizmo = makeGizmoMatrix(camera.viewMatrix(), camera.projMatrix(float(size.width()) / std::max(1,size.height())), center, size);
+    const QPointF start = project(gizmo, {}, size);
     int nearest = 0;
     float nearestDistance = 14.0f;
     for (int i = 1; i <= 3; ++i) {
@@ -255,8 +242,8 @@ int VulkanWindow::hitGizmo(const QPoint& pos) const
             for (int segment = 0; segment < 64; ++segment) {
                 const float a = float(segment) * 6.2831853f / 64.0f;
                 const float b = float(segment + 1) * 6.2831853f / 64.0f;
-                const QPointF p0 = project(viewProjection, center + radius * (tangent * std::cos(a) + bitangent * std::sin(a)), size);
-                const QPointF p1 = project(viewProjection, center + radius * (tangent * std::cos(b) + bitangent * std::sin(b)), size);
+                const QPointF p0 = project(gizmo, tangent * std::cos(a) + bitangent * std::sin(a), size);
+                const QPointF p1 = project(gizmo, tangent * std::cos(b) + bitangent * std::sin(b), size);
                 const QPointF segmentVector = p1 - p0;
                 const float lengthSquared = float(segmentVector.x() * segmentVector.x() + segmentVector.y() * segmentVector.y());
                 if (lengthSquared < 1.0f) continue;
@@ -268,7 +255,7 @@ int VulkanWindow::hitGizmo(const QPoint& pos) const
             }
             continue;
         }
-        const QPointF end = project(viewProjection, center + gizmoAxis(i) * radius, size);
+        const QPointF end = project(gizmo, gizmoAxis(i), size);
         const QPointF vector = end - start;
         const float lengthSquared = float(vector.x() * vector.x() + vector.y() * vector.y());
         if (lengthSquared < 1.0f) continue;
@@ -289,11 +276,11 @@ void VulkanWindow::mousePressEvent(QMouseEvent* event)
     m_dragDistance = 0;
     m_dragAxis = event->button() == Qt::LeftButton ? hitGizmo(event->pos()) : 0;
     if (m_dragAxis) {
-        m_dragStart = m_transforms[size_t(selectedSubMesh())];
+        m_edit.beginDrag(m_transforms[size_t(selectedSubMesh())]);
         if (m_transformMode == 2) {
             const Camera& camera = m_scene.cameraController().camera();
             const QMatrix4x4 vp = camera.projMatrix(float(width()) / std::max(1, height())) * camera.viewMatrix();
-            const QVector3D center = m_scene.selection().centers()[size_t(selectedSubMesh())] + m_dragStart.position;
+            const QVector3D center = m_scene.selection().centers()[size_t(selectedSubMesh())] + m_edit.dragStart().position;
             const QPointF relative = QPointF(event->pos()) - project(vp, center, size());
             m_dragAngle = std::atan2(float(relative.y()), float(relative.x()));
         }
@@ -314,21 +301,20 @@ void VulkanWindow::mouseMoveEvent(QMouseEvent* event)
         const QMatrix4x4 vp = camera.projMatrix(float(width()) / std::max(1, height())) * camera.viewMatrix();
         const float radius = gizmoRadius();
         const QVector3D direction3d = gizmoAxis(m_dragAxis);
-        const QPointF direction = project(vp, center + direction3d * radius, size()) - project(vp, center, size());
+        const QMatrix4x4 gizmo = makeGizmoMatrix(camera.viewMatrix(), camera.projMatrix(float(width()) / std::max(1,height())), center, size());
+        const QPointF direction = project(gizmo, direction3d, size()) - project(gizmo, {}, size());
         const float pixels = float(std::hypot(direction.x(), direction.y()));
         const float along = pixels > 1.0f ? float((delta.x() * direction.x() + delta.y() * direction.y()) / pixels) : 0.0f;
-        if (m_transformMode == 1) transform.position += direction3d * (along * radius / std::max(pixels, 1.0f));
+        if (m_transformMode == 1) EditController::translate(transform,direction3d,along*radius/std::max(pixels,1.0f));
         else if (m_transformMode == 2) {
             const QPointF relative = QPointF(event->pos()) - project(vp, center, size());
             const float angle = std::atan2(float(relative.y()), float(relative.x()));
-            float difference = angle - m_dragAngle;
-            if (difference > 3.14159265f) difference -= 6.2831853f;
-            if (difference < -3.14159265f) difference += 6.2831853f;
+            const float difference=EditController::angleDelta(angle,m_dragAngle);
             m_dragAngle = angle;
-            transform.rotation = QQuaternion::fromAxisAndAngle(direction3d, difference * 57.29578f) * transform.rotation;
+            transform.rotation = EditController::rotate(transform.rotation,direction3d,difference*57.29578f);
         }
         else if (m_transformMode == 3) {
-            const float value = std::clamp(transform.scale[m_dragAxis - 1] * (1.0f + along / 120.0f), 0.02f, 100.0f);
+            const float value = EditController::screenScale(transform.scale[m_dragAxis-1],along);
             transform.scale[m_dragAxis - 1] = value;
         }
         commitTileTransform();
@@ -345,12 +331,8 @@ void VulkanWindow::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton && m_dragAxis && selectedSubMesh() >= 0) {
         const TransformState& state = m_transforms[size_t(selectedSubMesh())];
-        if ((state.position - m_dragStart.position).length() > 1e-5f ||
-            (state.scale - m_dragStart.scale).length() > 1e-5f || state.rotation != m_dragStart.rotation) {
-            m_undo.push_back(m_dragStart);
-            m_redo.clear();
-            emit historyChanged(true, false);
-        }
+        if(m_edit.endDrag(selectedSubMesh(),state,EditController::ChangePolicy::VectorTolerance))
+            emit historyChanged(true,false);
     } else if (event->button() == Qt::LeftButton && m_dragDistance <= 3) {
         m_pendingPick = event->pos();
     } else if (event->button() == Qt::RightButton && m_dragDistance <= 3) {

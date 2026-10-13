@@ -77,8 +77,9 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
     connect(fixedFps, &QCheckBox::toggled, this, [this](bool enabled) { m_renderView->setFixedFpsEnabled(enabled); });
     connect(fpsSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int fps) { m_renderView->setTargetFps(fps); });
     layout->addWidget(renderBox);
-    m_outlineWidth = new QDoubleSpinBox(renderBox); m_outlineWidth->setRange(0.0, 1000.0); m_outlineWidth->setDecimals(4); m_outlineWidth->setSingleStep(0.01); m_outlineWidth->setSuffix(" 模型单位"); m_outlineWidth->setValue(view->outlineWidth());
-    renderLayout->addWidget(new QLabel("描边宽度（模型单位）", renderBox), 2, 0); renderLayout->addWidget(m_outlineWidth, 2, 1);
+    m_outlineWidth = new QDoubleSpinBox(renderBox); m_outlineWidth->setRange(0.0, 1000.0); m_outlineWidth->setDecimals(2); m_outlineWidth->setSingleStep(0.5); m_outlineWidth->setSuffix(" px"); m_outlineWidth->setValue(view->outlineWidth());
+    m_outlineWidth->setToolTip("屏幕物理像素；缩放模型或视野不改变描边宽度");
+    renderLayout->addWidget(new QLabel("描边宽度（像素）", renderBox), 2, 0); renderLayout->addWidget(m_outlineWidth, 2, 1);
     connect(m_outlineWidth, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double width) { m_renderView->setOutlineWidth(static_cast<float>(width)); });
 
     auto* viewBox = new QGroupBox("调试视图", content); auto* viewLayout = new QGridLayout(viewBox); auto* debugView = new QComboBox(viewBox); debugView->addItems({"光照结果", "法线", "UV"}); viewLayout->addWidget(new QLabel("着色模式", viewBox), 0, 0); viewLayout->addWidget(debugView, 0, 1); connect(debugView, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int mode) { m_renderView->setDebugView(mode); }); layout->addWidget(viewBox);

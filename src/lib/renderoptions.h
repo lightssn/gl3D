@@ -18,5 +18,5 @@ struct RenderOptions {
     bool fixedFps = false;
     int targetFps = 60;
     int debugView = 0;
-    float outlineWidth = 1.0f;
+    float outlineWidth = 2.0f; // Screen-space width in physical pixels, independent of model scale.
 };

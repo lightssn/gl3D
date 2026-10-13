@@ -11,7 +11,7 @@ layout(set = 0, binding = 0) uniform DrawParams {
 layout(set = 0, binding = 1) uniform sampler2D baseTexture;
 layout(set = 0, binding = 2) uniform sampler2D metalRoughTexture;
 layout(set = 0, binding = 3) uniform sampler2D normalTexture;
-layout(push_constant) uniform DrawMode { int mode; float outline; } drawMode;
+layout(push_constant) uniform DrawMode { int mode; float outline; vec2 viewport; } drawMode;
 layout(location = 0) in vec3 normal;
 layout(location = 1) in vec2 uv;
 layout(location = 2) in vec3 viewPosition;

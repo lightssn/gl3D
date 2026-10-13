@@ -47,7 +47,6 @@ class MainWindow : public QMainWindow {
     QAction* m_actMove = nullptr;    // 平移操作器
     QAction* m_actRot = nullptr;     // 旋转操作器
     QAction* m_actScale = nullptr;   // 缩放操作器
-    QAction* m_actDelete = nullptr;  // 删除模型
     QAction* m_curTransform = nullptr; // 当前激活的操作器按钮
     QMenu* m_contextMenu = nullptr;  // 右键菜单 开关菜单栏/状态栏
     QAction* m_actShowMenuBar = nullptr;   // 右键菜单项 顶部工具栏

@@ -5,6 +5,7 @@
 #include "gl3d_export.h"
 #include "renderscene.h"
 #include "renderview.h"
+#include "editcontroller.h"
 #include "debugstats.h"
 #include <QVulkanWindow>
 #include <QElapsedTimer>
@@ -12,7 +13,6 @@
 #include <QTimer>
 #include <cstdint>
 #include <vector>
-#include <map>
 
 class QVulkanInstance;
 class QThread;
@@ -55,8 +55,8 @@ public:
     int transformMode() const { return m_transformMode; }
     void undo();
     void redo();
-    bool canUndo() const { return !m_undo.empty(); }
-    bool canRedo() const { return !m_redo.empty(); }
+    bool canUndo() const { return m_edit.canUndo(); }
+    bool canRedo() const { return m_edit.canRedo(); }
     int selectedSubMesh() const { return m_scene.selection().index(); }
     void selectSubMesh(int index);
     bool takePendingPick(QPoint& position);
@@ -121,14 +121,12 @@ private:
     bool m_mipmaps = false;
     bool m_multisamplingAvailable = false;
     struct Bounds { QVector3D min, max; };
-    struct TransformState { QVector3D position; QQuaternion rotation; QVector3D scale{1, 1, 1}; };
-    std::map<int, TransformState> m_tileEdits;
+    using TransformState = EditTransform;
+    EditController m_edit;
     void commitTileTransform();
     std::vector<Bounds> m_bounds;
     std::vector<bool> m_visible;
-    std::vector<TransformState> m_transforms;
-    std::vector<TransformState> m_undo;
-    std::vector<TransformState> m_redo;
+    std::vector<TransformState>& m_transforms = m_edit.states();
     QPoint m_lastMousePos;
     QPoint m_pendingPick{-1, -1};
     Qt::MouseButton m_dragButton = Qt::NoButton;
@@ -136,7 +134,6 @@ private:
     int m_dragAxis = 0;
     float m_dragAngle = 0.0f;
     int m_transformMode = 0;
-    TransformState m_dragStart;
     QTimer m_renderTimer;
     QTimer m_idleFpsTimer;
     QElapsedTimer m_fpsTimer;

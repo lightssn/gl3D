@@ -1,5 +1,7 @@
 # gl3d_core 动态库 模型加载+OpenGL渲染
 add_library(gl3d_core SHARED
+    editcontroller.h
+    editcontroller.cpp
     tilenode.h
     tilestream.h
     tilestream.cpp

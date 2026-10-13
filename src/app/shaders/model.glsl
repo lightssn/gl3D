@@ -8,7 +8,8 @@ layout(location = 2) in vec2 aUV; //纹理坐标
 uniform mat4 uModel; //模型矩阵T·R·S
 uniform mat4 uView; //视图矩阵
 uniform mat4 uProj; //投影矩阵
-uniform float uOutline; //描边量，0为不描边
+uniform float uOutline; //描边宽度，物理像素；0为不描边
+uniform vec3 uViewport; //实际帧缓冲宽高，z未使用
 
 out vec3 vNormal; //观察空间法线
 out vec2 vUV; //透传uv
@@ -16,10 +17,17 @@ out vec3 vPosition; //观察空间位置，用于PBR视线方向和切线空间
 
 void main() {
     vec4 wp = uModel * vec4(aPos, 1.0); //模型顶点→世界顶点
-    vec3 wn = mat3(uModel) * aNormal; //世界法线，mat3去缩放
-    if (uOutline > 0.0) wp.xyz += wn * uOutline; //顶点沿法线外推，生成选中外轮廓
+    vec3 wn = mat3(transpose(inverse(uModel))) * aNormal;
     gl_Position = uProj * uView * wp; //glsl规范不写out
     vNormal = mat3(transpose(inverse(uView))) * wn; //观察法线=视图矩阵inverse求逆去缩放+transpose转置确保垂直+mat3去平移*世界法线
+    if (uOutline > 0.0 && gl_Position.w > 0.000001) {
+        // 投影法线的透视导数，按像素归一化；逆转置消除非均匀缩放影响。
+        vec4 direction = uProj * vec4(vNormal, 0.0);
+        vec2 pixelDirection = (direction.xy - gl_Position.xy / gl_Position.w * direction.w) * uViewport.xy;
+        float lengthPixels = length(pixelDirection);
+        if (lengthPixels > 0.000001)
+            gl_Position.xy += pixelDirection / lengthPixels * (2.0 * uOutline / uViewport.xy) * gl_Position.w;
+    }
     vUV = aUV; //光栅化插值
     vPosition = (uView * wp).xyz;
 }

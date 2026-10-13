@@ -107,14 +107,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_actMove->setObjectName("transformBtn");
     m_actRot->setObjectName("transformBtn");
     m_actScale->setObjectName("transformBtn");
-    m_actDelete = m_toolBar->addAction("删除");
     m_actMove->setCheckable(true);
     m_actRot->setCheckable(true);
     m_actScale->setCheckable(true);
     m_actMove->setVisible(false); //未选中模型不显示
     m_actRot->setVisible(false);
     m_actScale->setVisible(false);
-    m_actDelete->setVisible(false);
 
     //QToolBar为QAction创建的QToolButton不继承action的objectName 需在真实按钮上设
     //QSS按id匹配 线框/平移/旋转/缩放按钮获得勾选高亮 投影按钮无按下态
@@ -130,22 +128,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_actMove, &QAction::toggled, this, [this](bool on) { onTransformToggled(m_actMove, on); });
     connect(m_actRot, &QAction::toggled, this, [this](bool on) { onTransformToggled(m_actRot, on); });
     connect(m_actScale, &QAction::toggled, this, [this](bool on) { onTransformToggled(m_actScale, on); });
-    connect(m_actDelete, &QAction::triggered, this, [this]() {
-#if defined(GL3D_HAS_VULKAN)
-        if (m_vulkanBackend) {
-            if (m_vulkanWindow)
-                m_vulkanWindow->clearModel();
-            m_modelOpen = false;
-            m_modelInfo->setText("未加载模型");
-            m_actDelete->setVisible(false);
-            updateBackendUi();
-        } else {
-#else
-        {
-#endif
-            m_glWidget->deleteModel();
-        }
-    });
     connect(m_actUndo, &QAction::triggered, this, [this]() { activeView()->undo(); });
     connect(m_actRedo, &QAction::triggered, this, [this]() { activeView()->redo(); });
     // 撤销/重做可用性联动 禁用按钮由主题qss置灰
@@ -207,17 +189,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         updateBackendUi();
         QMessageBox::warning(this, "加载失败", err);
         });
-    // 选中状态联动 选中显示操作器与删除按钮 取消选中隐藏并关闭操作器
+    // 选中状态联动 选中显示操作器 取消选中隐藏并关闭操作器
     connect(m_glWidget, &GLWidget::selectionChanged, this, [this](bool selected) {
         m_actMove->setVisible(selected);
         m_actRot->setVisible(selected);
         m_actScale->setVisible(selected);
-        m_actDelete->setVisible(selected);
         if (!selected && m_curTransform)
             m_curTransform->setChecked(false); //触发toggled(false) 关闭操作器
         });
 
-    // 删除模型后复位状态栏提示
+    // 清空场景后复位状态栏提示
     connect(m_glWidget, &GLWidget::modelCleared, this, [this]() {
         m_modelInfo->setText("未加载模型  操作: 左键旋转+点击选中 右键点击弹菜单/拖拽平移 滚轮缩放 WASD平移 R复位");
         });
@@ -370,7 +351,6 @@ void MainWindow::setBackend(bool vulkan) {
             m_actMove->setVisible(selected);
             m_actRot->setVisible(selected);
             m_actScale->setVisible(selected);
-            m_actDelete->setVisible(selected);
             if (!selected && m_curTransform) m_curTransform->setChecked(false);
         });
         connect(m_vulkanWindow, &VulkanWindow::contextMenuRequested, this, [this](const QPoint& position) {
@@ -434,12 +414,6 @@ void MainWindow::updateBackendUi() {
 #endif
     );
     if (m_actDebug) m_actDebug->setEnabled(true);
-#if defined(GL3D_HAS_VULKAN)
-    if (!gl && m_actDelete)
-        m_actDelete->setVisible(m_modelOpen && m_vulkanWindow &&
-                               !m_vulkanWindow->isLoading() &&
-                               m_vulkanWindow->selectedSubMesh() >= 0);
-#endif
     if (m_debugWindow) m_debugWindow->setVisible(m_actDebug && m_actDebug->isChecked());
     for (QAction* action : {m_actProj, m_actWire, m_actUndo, m_actRedo, m_actMove, m_actRot, m_actScale})
         if (action) action->setEnabled(true);
@@ -463,7 +437,7 @@ void MainWindow::clearScene() {
     activeView()->setTransformMode(0);
     if(m_curTransform) m_curTransform->setChecked(false);
     m_curTransform=nullptr;
-    for(QAction* action:{m_actMove,m_actRot,m_actScale,m_actDelete}) action->setVisible(false);
+    for(QAction* action:{m_actMove,m_actRot,m_actScale}) action->setVisible(false);
     m_modelOpen=false;
     m_modelInfo->setText(QStringLiteral("\u672a\u52a0\u8f7d\u6a21\u578b"));
     m_loadProgress->setVisible(false);
