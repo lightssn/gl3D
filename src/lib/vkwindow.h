@@ -15,12 +15,12 @@
 class ModelLoaderWorker;
 
 // Qt 管理 Vulkan surface、swapchain 和同步对象，渲染器负责录制绘制命令。
-class GL3D_EXPORT VulkanWindow final : public QVulkanWindow, public RenderView {
+class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         Q_OBJECT
 
     public:
-        explicit VulkanWindow(QVulkanInstance* instance, QWindow* parent = nullptr);
-        ~VulkanWindow() override;
+        explicit VKWindow(QVulkanInstance* instance, QWindow* parent = nullptr);
+        ~VKWindow() override;
 
         bool isReady() const {
             return m_ready;

@@ -1,4 +1,4 @@
-#include "vulkanwindow.h"
+#include "vkwindow.h"
 
 #if defined(GL3D_HAS_VULKAN)
 
@@ -99,9 +99,9 @@ static QImage loadTextureImage(const QByteArray& bytes, const QString& path, boo
     return flipVertically ? image.mirrored() : image;
     }
 
-class VulkanWindowRenderer final : public QVulkanWindowRenderer {
+class VKWindowRenderer final : public QVulkanWindowRenderer {
     public:
-        explicit VulkanWindowRenderer(VulkanWindow* window) : m_window(window) {}
+        explicit VKWindowRenderer(VKWindow* window) : m_window(window) {}
 
         void initResources() override {
             m_device = m_window->device();
@@ -1605,7 +1605,7 @@ private:
             m_overlayPipelineLayout = VK_NULL_HANDLE;
             }
 
-        VulkanWindow* m_window = nullptr;
+        VKWindow* m_window = nullptr;
         VkDevice m_device = VK_NULL_HANDLE;
         QVulkanDeviceFunctions* m_df = nullptr;
         VkBuffer m_vertexBuffer = VK_NULL_HANDLE, m_indexBuffer = VK_NULL_HANDLE;
@@ -1662,7 +1662,7 @@ private:
 
 }
 
-VulkanWindow::VulkanWindow(QVulkanInstance* instance, QWindow* parent) : QVulkanWindow(parent) {
+VKWindow::VKWindow(QVulkanInstance* instance, QWindow* parent) : QVulkanWindow(parent) {
     setVulkanInstance(instance);
     m_ready = instance && instance->isValid();
     if (m_ready) {
@@ -1689,7 +1689,7 @@ VulkanWindow::VulkanWindow(QVulkanInstance* instance, QWindow* parent) : QVulkan
         });
     }
 
-VulkanWindow::~VulkanWindow() {
+VKWindow::~VKWindow() {
     if (m_loadThread) {
         m_loadThread->quit();
         m_loadThread->wait();
@@ -1699,21 +1699,21 @@ VulkanWindow::~VulkanWindow() {
         }
     }
 
-bool VulkanWindow::loadModel(const QString& path, QString* error) {
+bool VKWindow::loadModel(const QString& path, QString* error) {
     Mesh mesh;
     if (!MeshLoader::load(path, mesh, error)) return false;
     setLoadedMesh(std::move(mesh), path);
     return true;
     }
 
-bool VulkanWindow::loadModelAsync(const QString& path) {
+bool VKWindow::loadModelAsync(const QString& path) {
     return loadModelsAsync({path});
     }
 
-bool VulkanWindow::loadModelsAsync(const QStringList& paths) {
+bool VKWindow::loadModelsAsync(const QStringList& paths) {
     if (m_loading) return false;
     if (!m_loadThread) {
-        qRegisterMetaType<Mesh>("Mesh");
+        qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
         m_loadThread = new QThread(this);
         m_loadWorker = new ModelLoaderWorker;
         m_loadWorker->moveToThread(m_loadThread);
@@ -1721,15 +1721,15 @@ bool VulkanWindow::loadModelsAsync(const QStringList& paths) {
             if (m_loading) emit progressChanged(std::min(90, percent * 9 / 10));
             });
         connect(m_loadWorker, &ModelLoaderWorker::finished, this,
-        [this](bool ok, const QString& error, const Mesh& mesh) {
+        [this](bool ok, const QString& error, std::shared_ptr<Mesh> mesh) {
             if (!m_loading) return;
-            if (!ok) {
+            if (!ok || !mesh) {
                 m_loading = false;
                 emit loadFailed(error.isEmpty() ? QStringLiteral("加载失败") : error);
                 emit loadFinished();
                 return;
                 }
-            setLoadedMesh(mesh, m_currentPath);
+            setLoadedMesh(std::move(*mesh), m_currentPath);
             emit progressChanged(90);
             });
         m_loadThread->start();
@@ -1741,14 +1741,14 @@ bool VulkanWindow::loadModelsAsync(const QStringList& paths) {
     return true;
     }
 
-void VulkanWindow::modelUploadFinished() {
+void VKWindow::modelUploadFinished() {
     if (!m_loading) return;
     m_loading = false;
     emit progressChanged(100);
     emit loadFinished();
     }
 
-void VulkanWindow::setUpAxis(UpAxis axis) {
+void VKWindow::setUpAxis(UpAxis axis) {
     auto& camera = m_scene.cameraController().camera();
     if (camera.upAxis() == axis) return;
     camera.setUpAxis(axis);
@@ -1756,7 +1756,7 @@ void VulkanWindow::setUpAxis(UpAxis axis) {
     requestUpdate();
     }
 
-void VulkanWindow::updateTiles() {
+void VKWindow::updateTiles() {
     const auto boundsRevision=m_scene.tileBoundsRevision();
     if(!m_scene.tiled()) return;
     m_scene.updateTiles(swapChainImageSize());
@@ -1771,7 +1771,7 @@ void VulkanWindow::updateTiles() {
         }
     }
 
-void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path) {
+void VKWindow::setLoadedMesh(Mesh mesh, const QString& path) {
     m_scene.setMesh(std::move(mesh), path);
     m_edit.reset();
     if(m_scene.tiled()) {
@@ -1805,7 +1805,7 @@ void VulkanWindow::setLoadedMesh(Mesh mesh, const QString& path) {
     requestUpdate();
     }
 
-void VulkanWindow::clearModel() {
+void VKWindow::clearModel() {
     m_edit.reset();
     m_idleFpsTimer.stop();
     ++m_gridRevision;
@@ -1818,11 +1818,11 @@ void VulkanWindow::clearModel() {
     ++m_modelRevision;
     requestUpdate();
     }
-QVulkanWindowRenderer* VulkanWindow::createRenderer() {
-    return new VulkanWindowRenderer(this);
+QVulkanWindowRenderer* VKWindow::createRenderer() {
+    return new VKWindowRenderer(this);
     }
 
-void VulkanWindow::setTileBounds(bool enabled) {
+void VKWindow::setTileBounds(bool enabled) {
     m_scene.options().showTileBounds=enabled;
     ++m_gridRevision;
     requestUpdate();

@@ -1,5 +1,5 @@
 #include "debugwindow.h"
-#include "glwidget.h"
+#include "glwindow.h"
 #include "renderview.h"
 #include "processmemory.h"
 #include <QElapsedTimer>

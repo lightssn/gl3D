@@ -68,4 +68,4 @@ struct GL3D_EXPORT Mesh {
         }
     };
 
-Q_DECLARE_METATYPE(Mesh) //跨线程信号传Mesh 后台解析→主线程上传
+Q_DECLARE_METATYPE(std::shared_ptr<Mesh>)//qt信号槽跨线程传递自定义变量，需在声明变量后声明元类型

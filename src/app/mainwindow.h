@@ -2,7 +2,7 @@
 
 #include <QMainWindow>
 
-class GLWidget;
+class GLWindow;
 class RenderView;
 class QLabel;
 class QPushButton;
@@ -17,7 +17,7 @@ class QWidget;
 class QHBoxLayout;
 #if defined(GL3D_HAS_VULKAN)
 class QVulkanInstance;
-class VulkanWindow;
+class VKWindow;
 #endif
 
 // 主窗口 工具栏+GL视口+状态栏 日夜主题切换
@@ -30,7 +30,7 @@ class MainWindow : public QMainWindow {
     void updateBackendUi();
     void clearScene();
     RenderView* activeView() const;
-    GLWidget* m_glWidget = nullptr;
+    GLWindow* m_glWindow = nullptr;
     QWidget* m_viewContainer = nullptr;
     QWidget* m_glContainer = nullptr;
     QWidget* m_vulkanContainer = nullptr;
@@ -63,7 +63,7 @@ class MainWindow : public QMainWindow {
     bool m_modelOpen = false;
 #if defined(GL3D_HAS_VULKAN)
     QVulkanInstance* m_vulkanInstance = nullptr;
-    VulkanWindow* m_vulkanWindow = nullptr;
+    VKWindow* m_vkWindow = nullptr;
 #endif
     bool m_night = true;
 

@@ -7,6 +7,11 @@
 #include <QJsonObject>
 #include <QtEndian>
 #include <cstring>
+#include "renderscene.h"
+#include "tilenode.h"
+#include <QEventLoop>
+#include <QThread>
+#include <QTimer>
 
 // 临时目录写入测试文件 用例间隔离
 class MeshLoaderTest : public ::testing::Test {
@@ -149,4 +154,83 @@ TEST_F(MeshLoaderTest, GlbEmbeddedMesh) {
     EXPECT_EQ(mesh.subMeshes[0].textureData, QByteArray("img", 3));
     EXPECT_FALSE(mesh.subMeshes[0].flipTextureVertically);
     EXPECT_NEAR(mesh.subMeshes[0].vertices[0].nz, 1.0f, 1e-4f);
+}
+
+// Use a real queued connection and compare buffer addresses across scene adoption.
+TEST_F(MeshLoaderTest, QueuedResultMovesGeometryWithoutCopy) {
+    qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
+    const QString path=write("queued.obj","v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    QThread thread;
+    auto* worker=new ModelLoaderWorker;
+    worker->moveToThread(&thread);
+    QObject::connect(&thread,&QThread::finished,worker,&QObject::deleteLater);
+    QEventLoop loop;
+    RenderScene scene;
+    const Mesh* source=nullptr;
+    const Vertex* vertices=nullptr;
+    const unsigned* indices=nullptr;
+    std::weak_ptr<Mesh> lifetime;
+    bool received=false;
+    QObject::connect(worker,&ModelLoaderWorker::finished,&loop,
+        [&](bool ok,const QString&,std::shared_ptr<Mesh> mesh) {
+            if(ok && mesh && !mesh->subMeshes.empty()) {
+                source=mesh.get(); vertices=mesh->subMeshes[0].vertices.data();
+                indices=mesh->subMeshes[0].indices.data(); lifetime=mesh;
+            }
+        },Qt::DirectConnection);
+    QObject::connect(worker,&ModelLoaderWorker::finished,&loop,
+        [&](bool ok,const QString& error,std::shared_ptr<Mesh> mesh) {
+            received=true;
+            EXPECT_TRUE(ok) << qPrintable(error);
+            EXPECT_EQ(QThread::currentThread(),loop.thread());
+            EXPECT_EQ(mesh.get(),source);
+            if(ok && mesh && !mesh->subMeshes.empty()) {
+                EXPECT_EQ(mesh->subMeshes[0].vertices.data(),vertices);
+                scene.setMesh(std::move(*mesh));
+                EXPECT_EQ(scene.mesh().subMeshes[0].vertices.data(),vertices);
+                EXPECT_EQ(scene.mesh().subMeshes[0].indices.data(),indices);
+            }
+            loop.quit();
+        },Qt::QueuedConnection);
+    thread.start();
+    QMetaObject::invokeMethod(worker,"load",Qt::QueuedConnection,Q_ARG(QString,path));
+    QTimer::singleShot(5000,&loop,&QEventLoop::quit);
+    loop.exec(); thread.quit(); thread.wait();
+    EXPECT_TRUE(received);
+    EXPECT_TRUE(lifetime.expired());
+    EXPECT_EQ(scene.mesh().triangleCount(),1);
+}
+
+TEST(MeshLoader, QueuedResultKeepsOriginalOsgbTree) {
+    qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
+    QThread thread;
+    auto* worker=new ModelLoaderWorker;
+    worker->moveToThread(&thread);
+    QObject::connect(&thread,&QThread::finished,worker,&QObject::deleteLater);
+    QEventLoop loop;
+    RenderScene scene;
+    const TileNode* root=nullptr;
+    const Vertex* vertices=nullptr;
+    bool received=false;
+    QObject::connect(worker,&ModelLoaderWorker::finished,&loop,
+        [&](bool,const QString&,std::shared_ptr<Mesh> mesh) {
+            received=true;
+            EXPECT_EQ(mesh->tileRoot.get(),root);
+            scene.setMesh(std::move(*mesh));
+            EXPECT_EQ(scene.mesh().tileRoot.get(),root);
+            EXPECT_EQ(scene.mesh().subMeshes[0].vertices.data(),vertices);
+            loop.quit();
+        },Qt::QueuedConnection);
+    thread.start();
+    QMetaObject::invokeMethod(worker,[&] {
+        auto mesh=std::make_shared<Mesh>();
+        mesh->tileRoot=std::make_shared<TileNode>();
+        SubMesh part; part.vertices.resize(3); part.indices={0,1,2};
+        vertices=part.vertices.data(); root=mesh->tileRoot.get();
+        mesh->tileRoot->geometry.push_back(std::move(part));
+        emit worker->finished(true,{},std::move(mesh));
+    },Qt::QueuedConnection);
+    QTimer::singleShot(5000,&loop,&QEventLoop::quit);
+    loop.exec(); thread.quit(); thread.wait();
+    EXPECT_TRUE(received);
 }

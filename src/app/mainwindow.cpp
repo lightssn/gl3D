@@ -1,5 +1,5 @@
 #include "mainwindow.h"
-#include "glwidget.h"
+#include "glwindow.h"
 #include "debugwindow.h"
 #include "meshloader.h"
 #include "renderview.h"
@@ -22,7 +22,7 @@
 
 #if defined(GL3D_HAS_VULKAN)
 #include <QVulkanInstance>
-#include "vulkanwindow.h"
+#include "vkwindow.h"
 #endif
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -33,10 +33,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_viewLayout = new QHBoxLayout(m_viewContainer);
     m_viewLayout->setContentsMargins(0, 0, 0, 0);
     m_viewLayout->setSpacing(0);
-    m_glWidget = new GLWidget;
-    m_glContainer = QWidget::createWindowContainer(m_glWidget, m_viewContainer);
+    m_glWindow = new GLWindow;
+    m_glContainer = QWidget::createWindowContainer(m_glWindow, m_viewContainer);
     m_glContainer->setFocusPolicy(Qt::StrongFocus);
-    m_debugWindow = new DebugWindow(m_glWidget, m_viewContainer);
+    m_debugWindow = new DebugWindow(m_glWindow, m_viewContainer);
     m_viewLayout->addWidget(m_debugWindow, 0);
     m_viewLayout->addWidget(m_glContainer, 1);
     setCentralWidget(m_viewContainer);
@@ -131,7 +131,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_actUndo, &QAction::triggered, this, [this]() { activeView()->undo(); });
     connect(m_actRedo, &QAction::triggered, this, [this]() { activeView()->redo(); });
     // 撤销/重做可用性联动 禁用按钮由主题qss置灰
-    connect(m_glWidget, &GLWidget::historyChanged, this, [this](bool canUndo, bool canRedo) {
+    connect(m_glWindow, &GLWindow::historyChanged, this, [this](bool canUndo, bool canRedo) {
         m_actUndo->setEnabled(canUndo);
         m_actRedo->setEnabled(canRedo);
         });
@@ -169,28 +169,28 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (on) setBackend(true);
         });
 
-    connect(m_glWidget, &GLWidget::fpsUpdated, this, [this](int fps) {
+    connect(m_glWindow, &GLWindow::fpsUpdated, this, [this](int fps) {
         if (m_vulkanBackend) return;
         m_fpsLabel->setText(QString("FPS %1").arg(fps));
         });
-    connect(m_glWidget, &GLWidget::modelLoaded, this, [this](const QString& info) {
+    connect(m_glWindow, &GLWindow::modelLoaded, this, [this](const QString& info) {
         m_modelInfo->setText(info);
         m_modelOpen = true;
         updateBackendUi();
         });
-    connect(m_glWidget, &GLWidget::loadUnavailable, this, [this](const QString& message) {
-        m_modelOpen = m_glWidget->scene().hasModel();
+    connect(m_glWindow, &GLWindow::loadUnavailable, this, [this](const QString& message) {
+        m_modelOpen = m_glWindow->scene().hasModel();
         m_modelInfo->setText(message);
         statusBar()->showMessage(message);
         updateBackendUi();
         });
-    connect(m_glWidget, &GLWidget::loadFailed, this, [this](const QString& err) {
-        m_modelOpen = m_glWidget->scene().hasModel();
+    connect(m_glWindow, &GLWindow::loadFailed, this, [this](const QString& err) {
+        m_modelOpen = m_glWindow->scene().hasModel();
         updateBackendUi();
         QMessageBox::warning(this, "加载失败", err);
         });
     // 选中状态联动 选中显示操作器 取消选中隐藏并关闭操作器
-    connect(m_glWidget, &GLWidget::selectionChanged, this, [this](bool selected) {
+    connect(m_glWindow, &GLWindow::selectionChanged, this, [this](bool selected) {
         m_actMove->setVisible(selected);
         m_actRot->setVisible(selected);
         m_actScale->setVisible(selected);
@@ -199,26 +199,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         });
 
     // 清空场景后复位状态栏提示
-    connect(m_glWidget, &GLWidget::modelCleared, this, [this]() {
+    connect(m_glWindow, &GLWindow::modelCleared, this, [this]() {
         m_modelInfo->setText("未加载模型  操作: 左键旋转+点击选中 右键点击弹菜单/拖拽平移 滚轮缩放 WASD平移 R复位");
         });
 
     // 加载进度条: 开始显示清零 期间更新 结束隐藏
-    connect(m_glWidget, &GLWidget::modelCleared, this, [this]() {
+    connect(m_glWindow, &GLWindow::modelCleared, this, [this]() {
         m_modelOpen = false;
         updateBackendUi();
         });
-    connect(m_glWidget, &GLWidget::loadStarted, this, [this]() {
+    connect(m_glWindow, &GLWindow::loadStarted, this, [this]() {
         m_modelOpen = true;
         updateBackendUi();
         m_loadProgress->setValue(0);
         m_loadProgress->setVisible(true);
         m_modelInfo->setText("正在加载模型...");
         });
-    connect(m_glWidget, &GLWidget::progressChanged, this, [this](int p) {
+    connect(m_glWindow, &GLWindow::progressChanged, this, [this](int p) {
         m_loadProgress->setValue(p);
         });
-    connect(m_glWidget, &GLWidget::loadFinished, this, [this]() {
+    connect(m_glWindow, &GLWindow::loadFinished, this, [this]() {
         m_loadProgress->setVisible(false);
         updateBackendUi();
         });
@@ -240,7 +240,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // 替换工具栏自带右键菜单 避免误关工具栏后无法找回
     m_toolBar->setContextMenuPolicy(Qt::CustomContextMenu);
     statusBar()->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_glWidget, &GLWidget::contextMenuRequested, this, [this](const QPoint& globalPos) {
+    connect(m_glWindow, &GLWindow::contextMenuRequested, this, [this](const QPoint& globalPos) {
         m_contextMenu->exec(globalPos);
         });
     connect(m_toolBar, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
@@ -257,12 +257,12 @@ void MainWindow::openModel(const QString& path) { openModels({path}); }
 
 void MainWindow::openModels(const QStringList& paths) {
     if (!m_vulkanBackend) {
-        m_glWidget->loadModelsAsync(paths);
+        m_glWindow->loadModelsAsync(paths);
         return;
     }
 
 #if defined(GL3D_HAS_VULKAN)
-    m_vulkanWindow->loadModelsAsync(paths);
+    m_vkWindow->loadModelsAsync(paths);
 #else
     Q_UNUSED(paths);
 #endif
@@ -271,10 +271,10 @@ void MainWindow::openModels(const QStringList& paths) {
 MainWindow::~MainWindow() {
 #if defined(GL3D_HAS_VULKAN)
     if (m_vulkanContainer) {
-        m_debugWindow->setRenderView(m_glWidget);
+        m_debugWindow->setRenderView(m_glWindow);
         delete m_vulkanContainer;
         m_vulkanContainer = nullptr;
-        m_vulkanWindow = nullptr;
+        m_vkWindow = nullptr;
     }
     delete m_vulkanInstance;
 #endif
@@ -282,9 +282,9 @@ MainWindow::~MainWindow() {
 
 RenderView* MainWindow::activeView() const {
 #if defined(GL3D_HAS_VULKAN)
-    if (m_vulkanBackend && m_vulkanWindow) return m_vulkanWindow;
+    if (m_vulkanBackend && m_vkWindow) return m_vkWindow;
 #endif
-    return m_glWidget;
+    return m_glWindow;
 }
 
 void MainWindow::setBackend(bool vulkan) {
@@ -302,82 +302,82 @@ void MainWindow::setBackend(bool vulkan) {
             QMessageBox::warning(this, "Vulkan不可用", "Vulkan Instance 创建失败，请检查驱动或验证层。");
             return;
         }
-        m_vulkanWindow = new VulkanWindow(m_vulkanInstance);
-        if (!m_vulkanWindow->isReady()) {
-            delete m_vulkanWindow;
-            m_vulkanWindow = nullptr;
+        m_vkWindow = new VKWindow(m_vulkanInstance);
+        if (!m_vkWindow->isReady()) {
+            delete m_vkWindow;
+            m_vkWindow = nullptr;
             delete m_vulkanInstance;
             m_vulkanInstance = nullptr;
             m_actOpenGL->setChecked(true);
             QMessageBox::warning(this, "Vulkan不可用", "QVulkanWindow 初始化失败。");
             return;
         }
-        m_vulkanWindow->setOrtho(m_actProj->isChecked());
-        m_vulkanWindow->setWireframe(m_actWire->isChecked());
-        m_vulkanWindow->setClearColor(m_night ? 0.13f : 0.85f,
+        m_vkWindow->setOrtho(m_actProj->isChecked());
+        m_vkWindow->setWireframe(m_actWire->isChecked());
+        m_vkWindow->setClearColor(m_night ? 0.13f : 0.85f,
                                       m_night ? 0.13f : 0.86f,
                                       m_night ? 0.16f : 0.88f);
-        connect(m_vulkanWindow, &VulkanWindow::fpsUpdated, this, [this](int fps) {
+        connect(m_vkWindow, &VKWindow::fpsUpdated, this, [this](int fps) {
             if (m_vulkanBackend) m_fpsLabel->setText(QString("FPS %1").arg(fps));
         });
-        connect(m_vulkanWindow, &VulkanWindow::loadStarted, this, [this]() {
+        connect(m_vkWindow, &VKWindow::loadStarted, this, [this]() {
             m_modelOpen = true;
             m_modelInfo->setText("正在加载模型...");
             m_loadProgress->setValue(0);
             m_loadProgress->setVisible(true);
             updateBackendUi();
         });
-        connect(m_vulkanWindow, &VulkanWindow::progressChanged,
+        connect(m_vkWindow, &VKWindow::progressChanged,
                 m_loadProgress, &QProgressBar::setValue);
-        connect(m_vulkanWindow, &VulkanWindow::modelLoaded, this, [this](const QString& info) {
+        connect(m_vkWindow, &VKWindow::modelLoaded, this, [this](const QString& info) {
             m_modelInfo->setText(info);
             m_modelOpen = true;
             updateBackendUi();
         });
-        connect(m_vulkanWindow, &VulkanWindow::loadFailed, this, [this](const QString& error) {
-            m_modelOpen = m_vulkanWindow->scene().hasModel();
+        connect(m_vkWindow, &VKWindow::loadFailed, this, [this](const QString& error) {
+            m_modelOpen = m_vkWindow->scene().hasModel();
             updateBackendUi();
             QMessageBox::warning(this, "加载失败", error);
         });
-        connect(m_vulkanWindow, &VulkanWindow::loadFinished, this, [this]() {
+        connect(m_vkWindow, &VKWindow::loadFinished, this, [this]() {
             m_loadProgress->setVisible(false);
             updateBackendUi();
         });
-        connect(m_vulkanWindow, &VulkanWindow::historyChanged, this, [this](bool undo, bool redo) {
+        connect(m_vkWindow, &VKWindow::historyChanged, this, [this](bool undo, bool redo) {
             m_actUndo->setEnabled(undo);
             m_actRedo->setEnabled(redo);
         });
-        connect(m_vulkanWindow, &VulkanWindow::selectionChanged, this, [this](bool selected) {
+        connect(m_vkWindow, &VKWindow::selectionChanged, this, [this](bool selected) {
             m_actMove->setVisible(selected);
             m_actRot->setVisible(selected);
             m_actScale->setVisible(selected);
             if (!selected && m_curTransform) m_curTransform->setChecked(false);
         });
-        connect(m_vulkanWindow, &VulkanWindow::contextMenuRequested, this, [this](const QPoint& position) {
+        connect(m_vkWindow, &VKWindow::contextMenuRequested, this, [this](const QPoint& position) {
             m_contextMenu->exec(position);
         });
         // 嵌入式原生子窗口只保留一个可见渲染面，避免后台 OpenGL 子窗口抢占合成区域。
-        m_glWidget->setFixedFpsEnabled(false);
+        m_glWindow->setFixedFpsEnabled(false);
         m_glContainer->hide();
-        m_glWidget->hide();
-        m_vulkanContainer = QWidget::createWindowContainer(m_vulkanWindow, m_viewContainer);
+        m_glWindow->hide();
+        m_vulkanContainer = QWidget::createWindowContainer(m_vkWindow, m_viewContainer);
         m_vulkanContainer->setFocusPolicy(Qt::StrongFocus);
         m_viewLayout->addWidget(m_vulkanContainer, 1);
         m_vulkanBackend = true;
-        m_debugWindow->setRenderView(m_vulkanWindow);
+        m_debugWindow->setRenderView(m_vkWindow);
     } else {
-        m_debugWindow->setRenderView(m_glWidget);
+        m_debugWindow->setRenderView(m_glWindow);
         if (m_vulkanContainer) {
             delete m_vulkanContainer;
             m_vulkanContainer = nullptr;
-            m_vulkanWindow = nullptr;
+            m_vkWindow = nullptr;
         }
         if (m_vulkanInstance) {
             delete m_vulkanInstance;
             m_vulkanInstance = nullptr;
         }
         m_glContainer->show();
-        m_glWidget->show();
+        m_glWindow->show();
         m_vulkanBackend = false;
     }
     m_fpsLabel->clear();
@@ -400,9 +400,9 @@ void MainWindow::updateBackendUi() {
         false
 #endif
     );
-    bool loading=m_glWidget->isLoading();
+    bool loading=m_glWindow->isLoading();
 #if defined(GL3D_HAS_VULKAN)
-    if(!gl && m_vulkanWindow) loading=m_vulkanWindow->isLoading();
+    if(!gl && m_vkWindow) loading=m_vkWindow->isLoading();
 #endif
     if(m_actClear) m_actClear->setEnabled(m_modelOpen && !loading);
     if (m_actOpenGL) m_actOpenGL->setEnabled(!m_modelOpen);
@@ -417,11 +417,11 @@ void MainWindow::updateBackendUi() {
     if (m_debugWindow) m_debugWindow->setVisible(m_actDebug && m_actDebug->isChecked());
     for (QAction* action : {m_actProj, m_actWire, m_actUndo, m_actRedo, m_actMove, m_actRot, m_actScale})
         if (action) action->setEnabled(true);
-    bool canUndo = m_glWidget->canUndo(), canRedo = m_glWidget->canRedo();
+    bool canUndo = m_glWindow->canUndo(), canRedo = m_glWindow->canRedo();
 #if defined(GL3D_HAS_VULKAN)
-    if (!gl && m_vulkanWindow) {
-        canUndo = m_vulkanWindow->canUndo();
-        canRedo = m_vulkanWindow->canRedo();
+    if (!gl && m_vkWindow) {
+        canUndo = m_vkWindow->canUndo();
+        canRedo = m_vkWindow->canRedo();
     }
 #endif
     m_actUndo->setEnabled(canUndo);
@@ -430,10 +430,10 @@ void MainWindow::updateBackendUi() {
 
 void MainWindow::clearScene() {
 #if defined(GL3D_HAS_VULKAN)
-    if(m_vulkanBackend && m_vulkanWindow) m_vulkanWindow->clearModel();
+    if(m_vulkanBackend && m_vkWindow) m_vkWindow->clearModel();
     else
 #endif
-        m_glWidget->deleteModel();
+        m_glWindow->deleteModel();
     activeView()->setTransformMode(0);
     if(m_curTransform) m_curTransform->setChecked(false);
     m_curTransform=nullptr;
@@ -472,9 +472,9 @@ void MainWindow::applyTheme(bool night) {
     const float red = night ? 0.13f : 0.85f;
     const float green = night ? 0.13f : 0.86f;
     const float blue = night ? 0.16f : 0.88f;
-    m_glWidget->setClearColor(red, green, blue);
+    m_glWindow->setClearColor(red, green, blue);
 #if defined(GL3D_HAS_VULKAN)
-    if (m_vulkanWindow) m_vulkanWindow->setClearColor(red, green, blue);
+    if (m_vkWindow) m_vkWindow->setClearColor(red, green, blue);
 #endif
     if (m_debugWindow) m_debugWindow->setNightMode(night);
     m_themeBtn->setText(night ? "日间模式" : "夜间模式");

@@ -1,4 +1,4 @@
-#include "vulkanwindow.h"
+#include "vkwindow.h"
 #include "renderframe.h"
 
 #if defined(GL3D_HAS_VULKAN)
@@ -27,37 +27,37 @@ QPointF project(const QMatrix4x4& matrix, const QVector3D& point, const QSize& s
 }
 }
 
-void VulkanWindow::resetView()
+void VKWindow::resetView()
 {
     m_scene.resetView();
     requestUpdate();
 }
 
-void VulkanWindow::setOrtho(bool enabled)
+void VKWindow::setOrtho(bool enabled)
 {
     m_scene.cameraController().camera().setOrtho(enabled);
     requestUpdate();
 }
 
-void VulkanWindow::setWireframe(bool enabled) { m_scene.options().wireframe = enabled; ++m_pipelineRevision; requestUpdate(); }
-void VulkanWindow::setAntialiasing(bool enabled) {
+void VKWindow::setWireframe(bool enabled) { m_scene.options().wireframe = enabled; ++m_pipelineRevision; requestUpdate(); }
+void VKWindow::setAntialiasing(bool enabled) {
     m_scene.options().antialiasing = enabled && m_multisamplingAvailable;
     requestUpdate();
 }
-void VulkanWindow::setMipmaps(bool enabled) {
+void VKWindow::setMipmaps(bool enabled) {
     if (m_mipmaps == enabled) return;
     m_mipmaps = enabled;
     ++m_textureRevision;
     requestUpdate();
 }
-void VulkanWindow::setDepthTest(bool enabled) { m_scene.options().depthTest = enabled; ++m_pipelineRevision; requestUpdate(); }
-void VulkanWindow::setFaceCulling(bool enabled) { m_scene.options().faceCulling = enabled; ++m_pipelineRevision; requestUpdate(); }
-void VulkanWindow::setPbr(bool enabled) { m_scene.options().pbr = enabled && supportsPbr(); requestUpdate(); }
-void VulkanWindow::setNormalMap(bool enabled) { m_scene.options().normalMap = enabled && supportsNormalMap(); requestUpdate(); }
-void VulkanWindow::setDebugView(int mode) { m_scene.options().debugView = std::clamp(mode, 0, 2); requestUpdate(); }
-void VulkanWindow::setOutlineWidth(float width) { m_scene.options().outlineWidth = std::max(0.0f, width); requestUpdate(); }
+void VKWindow::setDepthTest(bool enabled) { m_scene.options().depthTest = enabled; ++m_pipelineRevision; requestUpdate(); }
+void VKWindow::setFaceCulling(bool enabled) { m_scene.options().faceCulling = enabled; ++m_pipelineRevision; requestUpdate(); }
+void VKWindow::setPbr(bool enabled) { m_scene.options().pbr = enabled && supportsPbr(); requestUpdate(); }
+void VKWindow::setNormalMap(bool enabled) { m_scene.options().normalMap = enabled && supportsNormalMap(); requestUpdate(); }
+void VKWindow::setDebugView(int mode) { m_scene.options().debugView = std::clamp(mode, 0, 2); requestUpdate(); }
+void VKWindow::setOutlineWidth(float width) { m_scene.options().outlineWidth = std::max(0.0f, width); requestUpdate(); }
 
-void VulkanWindow::setFixedFpsEnabled(bool enabled)
+void VKWindow::setFixedFpsEnabled(bool enabled)
 {
     m_scene.options().fixedFps = enabled;
     if (enabled) setTargetFps(m_scene.options().targetFps);
@@ -65,34 +65,34 @@ void VulkanWindow::setFixedFpsEnabled(bool enabled)
     requestUpdate();
 }
 
-void VulkanWindow::setTargetFps(int fps)
+void VKWindow::setTargetFps(int fps)
 {
     m_scene.options().targetFps = std::max(0, fps);
     if (m_scene.options().fixedFps)
         m_renderTimer.start(fps > 0 ? std::max(1, 1000 / fps) : 0);
 }
 
-void VulkanWindow::setTransformMode(int mode)
+void VKWindow::setTransformMode(int mode)
 {
     m_transformMode = std::clamp(mode, 0, 3);
     m_dragAxis = 0;
     requestUpdate();
 }
 
-QString VulkanWindow::subMeshName(int index) const
+QString VKWindow::subMeshName(int index) const
 {
     if (index < 0 || index >= subMeshCount()) return {};
     const std::string& name = m_scene.mesh().subMeshes[size_t(index)].materialName;
     return name.empty() ? QStringLiteral("(默认材质)") : QString::fromStdString(name);
 }
 
-bool VulkanWindow::subMeshVisible(int index) const
+bool VKWindow::subMeshVisible(int index) const
 {
     if(m_scene.tiled()) return m_scene.tileVisible(index);
     return index >= 0 && index < int(m_visible.size()) && m_visible[size_t(index)];
 }
 
-void VulkanWindow::setSubMeshVisible(int index, bool visible)
+void VKWindow::setSubMeshVisible(int index, bool visible)
 {
     if(m_scene.tiled()) { m_scene.setTileVisible(index,visible); requestUpdate(); return; }
     if (index < 0 || index >= int(m_visible.size())) return;
@@ -100,7 +100,7 @@ void VulkanWindow::setSubMeshVisible(int index, bool visible)
     requestUpdate();
 }
 
-void VulkanWindow::selectSubMesh(int index)
+void VKWindow::selectSubMesh(int index)
 {
     if (index < -1 || index >= subMeshCount()) return;
     if (m_scene.tiled() && index >= 0 && !m_scene.mesh().subMeshes[size_t(index)].resident) return;
@@ -113,7 +113,7 @@ void VulkanWindow::selectSubMesh(int index)
     requestUpdate();
 }
 
-bool VulkanWindow::takePendingPick(QPoint& position)
+bool VKWindow::takePendingPick(QPoint& position)
 {
     if (m_pendingPick.x() < 0) return false;
     position = m_pendingPick;
@@ -121,7 +121,7 @@ bool VulkanWindow::takePendingPick(QPoint& position)
     return true;
 }
 
-QMatrix4x4 VulkanWindow::subMeshTransform(int index) const
+QMatrix4x4 VKWindow::subMeshTransform(int index) const
 {
     if(m_scene.tiled()) return m_scene.tileTransform(index);
     QMatrix4x4 matrix;
@@ -132,13 +132,13 @@ QMatrix4x4 VulkanWindow::subMeshTransform(int index) const
     return state.matrix(center);
 }
 
-QQuaternion VulkanWindow::subMeshRotation(int index) const
+QQuaternion VKWindow::subMeshRotation(int index) const
 {
     return index >= 0 && index < int(m_transforms.size())
         ? m_transforms[size_t(index)].rotation : QQuaternion();
 }
 
-float VulkanWindow::gizmoRadius() const
+float VKWindow::gizmoRadius() const
 {
     const Camera& camera = m_scene.cameraController().camera();
     const int selected = selectedSubMesh();
@@ -150,13 +150,13 @@ float VulkanWindow::gizmoRadius() const
     return halfHeight * (2.0f * GizmoPixelRadius) / std::max(1, height());
 }
 
-QVector3D VulkanWindow::gizmoAxis(int index) const
+QVector3D VKWindow::gizmoAxis(int index) const
 {
     const int selected = selectedSubMesh();
     return EditController::gizmoAxis(index,m_transformMode==3 && selected>=0,subMeshRotation(selected));
 }
 
-void VulkanWindow::commitTileTransform() {
+void VKWindow::commitTileTransform() {
     const int index=selectedSubMesh();
     if(!m_scene.tiled() || index<0 || index>=int(m_transforms.size())) return;
     const auto& state=m_transforms[size_t(index)];
@@ -165,7 +165,7 @@ void VulkanWindow::commitTileTransform() {
     m_edit.setTileState(m_scene.mesh().subMeshes[size_t(index)].tileOwner,state);
 }
 
-void VulkanWindow::undo() {
+void VKWindow::undo() {
     const int index=selectedSubMesh();
     if(index<0 || !m_edit.undo(index,m_transforms[size_t(index)])) return;
     commitTileTransform();
@@ -173,7 +173,7 @@ void VulkanWindow::undo() {
     requestUpdate();
 }
 
-void VulkanWindow::redo() {
+void VKWindow::redo() {
     const int index=selectedSubMesh();
     if(index<0 || !m_edit.redo(index,m_transforms[size_t(index)])) return;
     commitTileTransform();
@@ -181,7 +181,7 @@ void VulkanWindow::redo() {
     requestUpdate();
 }
 
-int VulkanWindow::pickSubMesh(const QPoint& pos) const
+int VKWindow::pickSubMesh(const QPoint& pos) const
 {
     if (width() <= 0 || height() <= 0) return -1;
     const Camera& camera = m_scene.cameraController().camera();
@@ -222,7 +222,7 @@ int VulkanWindow::pickSubMesh(const QPoint& pos) const
     return hit;
 }
 
-int VulkanWindow::hitGizmo(const QPoint& pos) const
+int VKWindow::hitGizmo(const QPoint& pos) const
 {
     const int index = selectedSubMesh();
     if (!m_transformMode || index < 0 || !m_scene.options().showGizmo) return 0;
@@ -269,7 +269,7 @@ int VulkanWindow::hitGizmo(const QPoint& pos) const
     return nearest;
 }
 
-void VulkanWindow::mousePressEvent(QMouseEvent* event)
+void VKWindow::mousePressEvent(QMouseEvent* event)
 {
     m_lastMousePos = event->pos();
     m_dragButton = event->button();
@@ -288,7 +288,7 @@ void VulkanWindow::mousePressEvent(QMouseEvent* event)
     event->accept();
 }
 
-void VulkanWindow::mouseMoveEvent(QMouseEvent* event)
+void VKWindow::mouseMoveEvent(QMouseEvent* event)
 {
     const QPoint delta = event->pos() - m_lastMousePos;
     m_lastMousePos = event->pos();
@@ -327,7 +327,7 @@ void VulkanWindow::mouseMoveEvent(QMouseEvent* event)
     event->accept();
 }
 
-void VulkanWindow::mouseReleaseEvent(QMouseEvent* event)
+void VKWindow::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton && m_dragAxis && selectedSubMesh() >= 0) {
         const TransformState& state = m_transforms[size_t(selectedSubMesh())];
@@ -344,14 +344,14 @@ void VulkanWindow::mouseReleaseEvent(QMouseEvent* event)
     event->accept();
 }
 
-void VulkanWindow::wheelEvent(QWheelEvent* event)
+void VKWindow::wheelEvent(QWheelEvent* event)
 {
     m_scene.cameraController().camera().zoom(event->angleDelta().y() / 120.0f);
     requestUpdate();
     event->accept();
 }
 
-void VulkanWindow::keyPressEvent(QKeyEvent* event)
+void VKWindow::keyPressEvent(QKeyEvent* event)
 {
     Camera& camera = m_scene.cameraController().camera();
     switch (event->key()) {
@@ -368,7 +368,7 @@ void VulkanWindow::keyPressEvent(QKeyEvent* event)
     event->accept();
 }
 
-void VulkanWindow::recordFrame(int drawCalls)
+void VKWindow::recordFrame(int drawCalls)
 {
     m_idleFpsTimer.start(1000);
     m_lastDrawCalls = drawCalls;
@@ -386,7 +386,7 @@ void VulkanWindow::recordFrame(int drawCalls)
     }
 }
 
-void VulkanWindow::setResourceStats(qint64 vertexBytes, qint64 indexBytes, qint64 textureBytes,
+void VKWindow::setResourceStats(qint64 vertexBytes, qint64 indexBytes, qint64 textureBytes,
                                     qint64 textureCpuBytes, int textureCount, int bufferCount)
 {
     m_vertexBytes = vertexBytes;
@@ -397,26 +397,26 @@ void VulkanWindow::setResourceStats(qint64 vertexBytes, qint64 indexBytes, qint6
     m_bufferCount = bufferCount;
 }
 
-void VulkanWindow::setFramebufferStats(qint64 bytes, int ownedCount)
+void VKWindow::setFramebufferStats(qint64 bytes, int ownedCount)
 {
     m_framebufferBytes = bytes;
     m_ownedFramebufferCount = ownedCount;
 }
 
-void VulkanWindow::setDeviceDescription(const QString& name, const QString& version)
+void VKWindow::setDeviceDescription(const QString& name, const QString& version)
 {
     m_deviceName = name;
     m_apiVersion = version;
 }
 
-void VulkanWindow::setClearColor(float red, float green, float blue)
+void VKWindow::setClearColor(float red, float green, float blue)
 {
     m_clearColor[0] = red; m_clearColor[1] = green; m_clearColor[2] = blue;
     ++m_gridRevision;
     requestUpdate();
 }
 
-DebugSnapshot VulkanWindow::debugSnapshot()
+DebugSnapshot VKWindow::debugSnapshot()
 {
     DebugSnapshot snapshot;
     snapshot.fps = m_lastFps;

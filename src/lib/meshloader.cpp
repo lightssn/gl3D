@@ -51,8 +51,7 @@ bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
     return true;
     }
 
-bool MeshLoader::loadMany(const QStringList& paths, Mesh& mesh, QString* error,
-    const std::function<void(int)>& progress) {
+bool MeshLoader::loadMany(const QStringList& paths, Mesh& mesh, QString* error, const std::function<void(int)>& progress) {
     if(paths.size()==1) return load(paths.front(),mesh,error,progress);
     mesh=Mesh{};
 #if defined(GL3D_HAS_OSGB)
@@ -65,16 +64,15 @@ bool MeshLoader::loadMany(const QStringList& paths, Mesh& mesh, QString* error,
 }
 
 void ModelLoaderWorker::loadMany(const QStringList& paths) {
-    Mesh mesh; QString error;
-    const bool ok=MeshLoader::loadMany(paths,mesh,&error,[this](int percent){ emit progress(percent); });
-    emit finished(ok,error,mesh);
+    auto mesh = std::make_shared<Mesh>();
+    QString error;
+    const bool ok = MeshLoader::loadMany(paths, *mesh, &error, [this](int percent) { emit progress(percent); });
+    if (!ok) mesh.reset();
+    emit finished(ok, error, std::move(mesh));//move左值转右值引用，标记可移动
 }
 
 void ModelLoaderWorker::load(const QString& path) {
-    Mesh mesh;
-    QString error;
-    const bool ok = MeshLoader::load(path, mesh, &error, [this](int percent) { emit progress(percent); });
-    emit finished(ok, error, mesh);
+    loadMany({path});
 }
 
 //mtl材质参数

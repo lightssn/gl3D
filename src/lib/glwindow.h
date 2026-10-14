@@ -26,7 +26,7 @@ class ModelLoaderWorker; //后台解析线程的工作对象 定义在cpp
 
 //OpenGL渲染视口 负责context生命周期/渲染循环/键鼠交互
 //交互 左键旋转+点击选中 右键点击弹菜单+右键拖拽平移 滚轮缩放 WASD平移 R复位
-class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
+class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         Q_OBJECT
         //操作器模式 控制模型中央显示何种手柄
         enum TransformMode { None = 0, Translate = 1, Rotate = 2, Scale = 3 };
@@ -80,7 +80,7 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         ModelLoaderWorker* m_loadWorker = nullptr;
         bool m_loading = false; //加载中 防止重复触发
         QString m_currentPath;  //当前加载的模型路径 状态栏显示文件名用
-        void onLoadFinished(bool ok, const QString& err, const Mesh& mesh);
+        void onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> mesh);
 
         //离屏拾取FBO 点击处读颜色判断是否命中模型
         unsigned int m_pickFbo = 0, m_pickColor = 0, m_pickDepth = 0;
@@ -162,8 +162,8 @@ class GL3D_EXPORT GLWidget : public QOpenGLWindow, public RenderView {
         void applyTransform(const TransformState& s);
 
     public:
-        explicit GLWidget(QWindow* parent = nullptr);
-        ~GLWidget() override;
+        explicit GLWindow(QWindow* parent = nullptr);
+        ~GLWindow() override;
 
         //加载模型文件 成功返回true并发出modelLoaded
         bool loadModel(const QString& path);

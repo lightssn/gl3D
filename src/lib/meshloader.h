@@ -33,5 +33,5 @@ public slots:
     void loadMany(const QStringList& paths);
 signals:
     void progress(int percent);
-    void finished(bool ok, const QString& error, const Mesh& mesh);
+    void finished(bool ok, const QString& error, std::shared_ptr<Mesh> mesh);
 };

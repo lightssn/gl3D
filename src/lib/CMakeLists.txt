@@ -27,8 +27,8 @@ add_library(gl3d_core SHARED
     shader.cpp
     meshrenderer.h
     meshrenderer.cpp
-    glwidget.h
-    glwidget.cpp
+    glwindow.h
+    glwindow.cpp
 )
 
 if(GL3D_ENABLE_OSGB)
@@ -39,9 +39,9 @@ endif()
 
 if(GL3D_HAS_VULKAN)
     target_sources(gl3d_core PRIVATE
-        vulkanwindow.h
-        vulkanwindow.cpp
-        vulkanwindow_input.cpp
+        vkwindow.h
+        vkwindow.cpp
+        vkwindow_input.cpp
     )
     target_compile_definitions(gl3d_core PUBLIC GL3D_HAS_VULKAN=1)
     target_link_libraries(gl3d_core PUBLIC Vulkan::Vulkan)

@@ -11,7 +11,7 @@
 
 #if defined(GL3D_HAS_VULKAN)
 #include <QVulkanInstance>
-#include "vulkanwindow.h"
+#include "vkwindow.h"
 #endif
 
 #ifdef _WIN32
@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
             return 2;
         }
 
-        VulkanWindow window(&instance);
+        VKWindow window(&instance);
         if (!window.isReady()) {
             fprintf(stderr, "[gl3d] Vulkan instance 无效\n");
             return 2;
