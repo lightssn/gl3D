@@ -104,10 +104,6 @@ void TileStream::install(Mesh& mesh,const std::shared_ptr<TileNode>& node,int in
         else { slot=m_freeSlots.back(); m_freeSlots.pop_back(); }
         part.tileOwner=owner; part.tileLevel=node->level;
         part.savedVertices=int(part.vertices.size()); part.savedTriangles=int(part.indices.size()/3);
-        part.residentBytes=qint64(part.vertices.size()*sizeof(Vertex)+part.indices.size()*sizeof(unsigned));
-        // 包含解码纹理的估算；不是驱动的实际分配值。
-        QImage image=part.baseImage;
-        part.residentBytes+=image.sizeInBytes()*2+part.textureData.size();
         part.revision=m_revision++; part.drawable=false; part.uploaded=false;
         part.materialName=(node->name.isEmpty()?QStringLiteral("瓦片 %1").arg(owner):node->name).toStdString();
         mesh.subMeshes[size_t(slot)]=std::move(part); node->renderSlots.push_back(slot);

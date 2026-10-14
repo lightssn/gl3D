@@ -109,6 +109,24 @@ int main(int argc, char** argv) {
         gl.glClear(GL_COLOR_BUFFER_BIT); shader.bind(); renderer.render(shader); shader.unbind();
         if(fbo.toImage().pixelColor(16,32).green()>5) { qCritical()<<"Tint toggle did not restore texture"; result=8; }
         renderer.setMipmapsEnabled(true);
+        // 实际像素验证两种光照模式关闭法线光照后只剩环境项。
+        modelShader.bind();
+        QMatrix4x4 identity;
+        modelShader.setMat4("uView",identity.constData()); modelShader.setMat4("uProj",identity.constData());
+        modelShader.setInt("uFlatColor",0); modelShader.setInt("uDebugView",0); modelShader.setFloat("uOutline",0);
+        for(int pbr : {0,1}) {
+            modelShader.setInt("uPbr",pbr);
+            modelShader.setInt("uNormalLighting",1);
+            gl.glClear(GL_COLOR_BUFFER_BIT); renderer.render(modelShader);
+            const int lit=fbo.toImage().pixelColor(16,32).red();
+            modelShader.setInt("uNormalLighting",0);
+            gl.glClear(GL_COLOR_BUFFER_BIT); renderer.render(modelShader);
+            const int ambient=fbo.toImage().pixelColor(16,32).red();
+            if(lit<=ambient+20 || ambient<1 || ambient>80) {
+                qCritical()<<"Normal lighting toggle failed"<<pbr<<lit<<ambient; result=10;
+            }
+        }
+        modelShader.unbind();
         renderer.setMipmapsEnabled(false);
         renderer.clear();
         if(gl.glIsTexture(textures.empty()?0:textures[0])) { qCritical()<<"Texture leaked"; result=5; }

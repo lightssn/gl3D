@@ -178,6 +178,7 @@ void GLWidget::paintGL() {
     m_shader->setInt("uDebugView", m_debugView);
     m_shader->setInt("uPbr", m_pbr ? 1 : 0);
     m_shader->setInt("uEnableNormalMap", m_normalMap ? 1 : 0);
+    m_shader->setInt("uNormalLighting", m_renderOptions.normalLighting ? 1 : 0);
     m_shader->setVec4("uFlatColorValue", 1, 1, 1, 1);
     m_renderer->render(*m_shader);
     m_frameDrawCalls += m_renderer->visibleDrawCount();

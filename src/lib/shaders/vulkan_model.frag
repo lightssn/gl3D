@@ -51,6 +51,12 @@ void main() {
     }
     if (params.options.z > 1.5) { outColor = vec4(fract(uv), 0.0, 1.0); return; }
     vec3 base = params.materialFlags.y > 0.5 ? texture(baseTexture, uv).rgb : params.baseMetal.rgb;
+    if (params.options.w < 0.5) {
+        vec3 ambient = params.options.x < 0.5 ? base * 0.30
+            : linearToSrgb((params.materialFlags.y > 0.5 ? srgbToLinear(base) : base) * 0.03);
+        outColor = vec4(mix(ambient, params.tileTint.rgb, params.tileTint.a), 1.0);
+        return;
+    }
     if (params.options.y > 0.5 && params.materialFlags.w > 0.5) {
         vec3 tangentNormal = texture(normalTexture, uv).xyz * 2.0 - 1.0;
         vec3 dp1 = dFdx(viewPosition), dp2 = dFdy(viewPosition);

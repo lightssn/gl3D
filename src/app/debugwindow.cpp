@@ -65,6 +65,9 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
     auto* msaa = option(renderLayout, "抗锯齿 MSAA", 0, 0, true); auto* mipmap = option(renderLayout, "纹理 Mipmap", 0, 1, false); auto* depth = option(renderLayout, "深度测试", 1, 0, true); auto* culling = option(renderLayout, "背面剔除", 1, 1, false); auto* pbr = option(renderLayout, "PBR 光照", 3, 0, false); auto* normalMap = option(renderLayout, "法线贴图", 3, 1, true); auto* fixedFps = option(renderLayout, "固定帧率", 4, 0, false); auto* fpsSpin = new QSpinBox(renderBox);
     m_msaa = msaa; m_mipmap = mipmap; m_depth = depth; m_culling = culling;
     m_pbr = pbr; m_normalMap = normalMap; m_fixedFps = fixedFps; m_fpsSpin = fpsSpin;
+    m_normalLighting = option(renderLayout, "法线光照", 5, 0, view->scene().options().normalLighting);
+    m_normalLighting->setToolTip("关闭后仅保留环境光、材质和纹理，跳过法线相关的漫反射、高光和法线贴图；法线调试视图与描边不变。");
+    connect(m_normalLighting, &QCheckBox::toggled, this, [this](bool enabled) { m_renderView->setNormalLighting(enabled); });
     QScreen* screen = QGuiApplication::primaryScreen();
     const int refreshRate = screen && screen->refreshRate() > 0.0 ? qRound(screen->refreshRate()) : 60;
     fpsSpin->setRange(0, refreshRate); fpsSpin->setValue(refreshRate); fpsSpin->setSuffix(" FPS"); fpsSpin->setToolTip("0表示不限制定时器频率"); renderLayout->addWidget(fpsSpin, 4, 1);
@@ -94,7 +97,7 @@ DebugWindow::DebugWindow(RenderView* view, QWidget* parent) : QWidget(parent), m
 
     auto* levelsBox = m_levelsBox = new QGroupBox(QStringLiteral("\u91d1\u5b57\u5854\u5c42\u7ea7\uff08\u5df2\u53d1\u73b0\uff09"), content);
     m_osgbBox=new QGroupBox("OSGB",content);
-    auto* osgbLayout=new QVBoxLayout(m_osgbBox);
+    auto* osgbLayout=new QHBoxLayout(m_osgbBox);
     m_onDemand=new QCheckBox(QStringLiteral("\u6309\u9700\u6a21\u5f0f"),m_osgbBox);
     m_onDemand->setChecked(view->scene().options().osgbOnDemand);
     m_onDemand->setToolTip(QStringLiteral("\u89c6\u91ce\u5185\u74e6\u7247\u52a0\u8f7d\u548c\u4e0a\u4f20\u5b8c\u6210\u540e\u505c\u6b62\u91cd\u7ed8\uff0c\u7528\u6237\u64cd\u4f5c\u540e\u6062\u590d\u3002"));
@@ -180,6 +183,7 @@ void DebugWindow::setRenderView(RenderView* view) {
     view->setFaceCulling(m_culling->isChecked());
     view->setPbr(m_pbr->isChecked());
     view->setNormalMap(m_normalMap->isChecked());
+    view->setNormalLighting(m_normalLighting->isChecked());
     view->setFixedFpsEnabled(m_fixedFps->isChecked());
     view->setTargetFps(m_fpsSpin->value());
     view->setDebugView(m_debugView->currentIndex());

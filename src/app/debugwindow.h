@@ -33,5 +33,6 @@ private:
     QGroupBox* m_osgbBox;
     QCheckBox* m_onDemand;
     QSpinBox* m_fpsSpin;
+    QCheckBox* m_normalLighting;
     int m_subMeshCount = -1;
 };

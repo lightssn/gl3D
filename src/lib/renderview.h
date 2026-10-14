@@ -32,6 +32,7 @@ public:
     virtual void setFaceCulling(bool enabled) = 0;
     virtual void setPbr(bool enabled) = 0;
     virtual void setNormalMap(bool enabled) = 0;
+    void setNormalLighting(bool enabled) { scene().options().normalLighting = enabled; requestRedraw(); }
     virtual void setFixedFpsEnabled(bool enabled) = 0;
     virtual void setTargetFps(int fps) = 0;
     virtual void setDebugView(int mode) = 0;

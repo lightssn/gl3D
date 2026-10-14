@@ -12,53 +12,60 @@
 
 struct TileNode;
 
-//交错顶点 位置3+法线3+uv2 与着色器location 0/1/2对应
+//顶点，位置/法线/本网格纹理uv，对应着色器location 0/1/2
 struct Vertex {
     float px, py, pz;
     float nx, ny, nz;
     float u, v;
-};
+    };
 
-//按材质拆分的子网格 每个子网格独立纹理与VAO
+//子网格，存纹理与VAO，独立渲染
 struct SubMesh {
-    QVector3D boundsMin, boundsMax;
-    int tileOwner = -1;
-    int tileLevel = -1;
-    uint64_t revision = 0;
-    int savedVertices = 0, savedTriangles = 0;
-    qint64 residentBytes = 0;
-    QImage baseImage;
+    QVector3D boundsMin, boundsMax;//包围盒角点
+    //瓦片
+    int tileOwner = -1;//瓦片id
+    int tileLevel = -1;//瓦片层级
+    uint64_t revision = 0;//gpu资源号
+    //统计
+    int savedVertices = 0, savedTriangles = 0;//顶点 三角形数，用于上传gpu清空cpu容器后估算占用
+    //状态
+    //是否已上传内存，是否几何完整可绘制，是否已上传gpu
     bool resident = true, drawable = true, uploaded = false;
-    std::string materialName;        //usemtl名 stl为空
-    std::vector<Vertex> vertices;
-    std::vector<unsigned int> indices;
-    QString texturePath;             //map_Kd解析到的磁盘路径 空则无纹理
-    QByteArray textureData;          //GLB内嵌基础色纹理
-    QString metallicRoughnessPath;
-    QByteArray metallicRoughnessData;
-    QString normalPath;
-    QByteArray normalData;
-    bool flipTextureVertically = true; //OBJ适配OpenGL原点，glTF纹理坐标无需翻转
-    float metallicFactor = 0.0f;
-    float roughnessFactor = 1.0f;
-    QVector3D diffuseColor{0.7f, 0.7f, 0.7f}; //mtl的Kd 无纹理时兜底着色
-};
+    //点面
+    std::vector<Vertex> vertices;//顶点 3倍数
+    std::vector<unsigned int> indices;//面顶点索引 三角面数x3
+    //材质
+    std::string materialName; //材质名 stl为空
+    QImage baseImage;//基础色纹理
+    QString texturePath; //外部纹理路径
+    QByteArray textureData; //glb内嵌基础色纹理
+    QString metallicRoughnessPath;//pbr金属粗糙度纹理路径
+    QByteArray metallicRoughnessData;//pbr金属粗糙度纹理
+    QString normalPath;//法线贴图路径
+    QByteArray normalData;//法线贴图
+    bool flipTextureVertically = true; //是否垂直翻转纹理 obj需翻转
+    float metallicFactor = 0.0f;//金属度 1金属
+    float roughnessFactor = 1.0f;//粗糙度 1粗糙
+    QVector3D diffuseColor{0.7f, 0.7f, 0.7f}; //漫反射色 无纹理时显示
+    };
 
 //整体网格 包围盒用于相机自动取景
 struct GL3D_EXPORT Mesh {
-    std::shared_ptr<TileNode> tileRoot;
-    std::vector<SubMesh> subMeshes;
-    QVector3D bboxMin;
-    QVector3D bboxMax;
-    int retainedVertexCount = 0;
-    int retainedTriangleCount = 0;
+    std::shared_ptr<TileNode> tileRoot;//瓦片树根节点
+    std::vector<SubMesh> subMeshes;//子网格
+    QVector3D bboxMin, bboxMax;//包围盒角点
+    int retainedVertexCount = 0, retainedTriangleCount = 0;//当前内存中顶点/三角形数
 
-    //三角形总数 状态栏统计用
-    int triangleCount() const;
-    int vertexCount() const;
-    void releaseGeometry();
-    QVector3D center() const { return (bboxMin + bboxMax) * 0.5f; }
-    float radius() const { return (bboxMax - bboxMin).length() * 0.5f; }
-};
+    // 状态栏统计用
+    int triangleCount() const;//三角形总数
+    int vertexCount() const;//顶点总数
+    void releaseGeometry();//释放几何数据
+    QVector3D center() const { //包围盒中心点
+        return (bboxMin + bboxMax) * 0.5f;
+        }
+    float radius() const { //包围盒球半径(对角线长一半)
+        return (bboxMax - bboxMin).length() * 0.5f;
+        }
+    };
 
 Q_DECLARE_METATYPE(Mesh) //跨线程信号传Mesh 后台解析→主线程上传

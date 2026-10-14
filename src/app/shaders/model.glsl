@@ -52,6 +52,7 @@ uniform sampler2D uNormalTexture;
 uniform int uUseMetallicRoughness;
 uniform int uUseNormalMap;
 uniform int uEnableNormalMap;
+uniform int uNormalLighting; //关闭时只保留环境光，不使用法线贴图
 uniform float uMetallic;
 uniform float uRoughness;
 
@@ -101,6 +102,12 @@ void main() {
     if (uDebugView == 1) { FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
     if (uDebugView == 2) { FragColor = vec4(fract(vUV), 0.0, 1.0); return; }
     vec3 base = uUseTexture == 1 ? texture(uTexture, vUV).rgb : uDiffuse; //底色=纹理rgb或纯色
+    if (uNormalLighting == 0) {
+        vec3 ambient = uPbr == 0 ? base * 0.30
+            : linearToSrgb((uUseTexture == 1 ? srgbToLinear(base) : base) * 0.03);
+        FragColor = vec4(mix(ambient, uTileTint.rgb, uTileTint.a), 1.0);
+        return;
+    }
     //两种光照模式共用法线贴图，关闭开关时保留顶点法线
     if (uEnableNormalMap == 1 && uUseNormalMap == 1) {
         vec3 tangentNormal = texture(uNormalTexture, vUV).xyz * 2.0 - 1.0;
