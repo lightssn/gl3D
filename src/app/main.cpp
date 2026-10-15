@@ -94,14 +94,15 @@ int main(int argc, char* argv[]) {
         }
         window.resize(1100, 720);
         window.setTitle("gl3d Vulkan");
-        if (!args.isEmpty()) {
-            QString error;
-            if (!window.loadModel(args.first(), &error)) {
-                fprintf(stderr, "[gl3d] Vulkan 模型加载失败: %s\n", qPrintable(error));
-                return 3;
-            }
-        }
+        QObject::connect(&window, &VKWindow::loadFailed, &app, [&app](const QString& error) {
+            fprintf(stderr, "[gl3d] Vulkan mesh load failed: %s\n", qPrintable(error));
+            app.exit(3);
+        });
         window.show();
+        if (!args.isEmpty() && !window.loadMeshAsync(QStringList{args.first()})) {
+            fprintf(stderr, "[gl3d] Vulkan mesh load could not be started\n");
+            return 3;
+        }
         return app.exec();
     }
 #endif
@@ -122,6 +123,6 @@ int main(int argc, char* argv[]) {
     MainWindow w;
     w.show();
     if (!args.isEmpty())
-        w.openModel(args.first()); // CLI传入模型直接加载
+        w.openMesh(args.first()); // CLI传入模型直接加载
     return app.exec();
     }

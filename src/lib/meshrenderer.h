@@ -1,7 +1,6 @@
 #pragma once
 
 #include "gl3d_export.h"
-#include "mesh.h"
 #include <vector>
 #include <QImage>
 #include <QMatrix4x4>
@@ -10,6 +9,8 @@
 
 class Shader;
 class RenderScene;
+struct Mesh;
+struct SubMesh;
 
 //网格GPU资源 每个子网格一组VAO/VBO/EBO+纹理 生命周期须在context内
 class GL3D_EXPORT MeshRenderer {

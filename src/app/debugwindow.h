@@ -1,5 +1,4 @@
 #pragma once
-#include "debugstats.h"
 #include <QWidget>
 class QLabel; class QTableWidget; class FrameGraph; class RenderView; class QTimer; class QListWidget; class QShowEvent; class QDoubleSpinBox; class QCheckBox; class QComboBox; class QSpinBox; class QGroupBox;
 class DebugWindow : public QWidget {

@@ -154,7 +154,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(actOpen, &QAction::triggered, this, [this]() {
         QStringList paths = QFileDialog::getOpenFileNames(
                            this, "选择模型", QString(), "模型文件 (*.stl *.obj *.glb *.osgb);;OSGB (*.osgb);;所有文件 (*)");
-        if (!paths.isEmpty()) openModels(paths);
+        if (!paths.isEmpty()) openMeshes(paths);
         });
     connect(actReset, &QAction::triggered, this, [this]() { activeView()->resetView(); });
     m_actDebug->setCheckable(true);
@@ -173,19 +173,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (m_vulkanBackend) return;
         m_fpsLabel->setText(QString("FPS %1").arg(fps));
         });
-    connect(m_glWindow, &GLWindow::modelLoaded, this, [this](const QString& info) {
+    connect(m_glWindow, &GLWindow::meshLoaded, this, [this](const QString& info) {
         m_modelInfo->setText(info);
         m_modelOpen = true;
         updateBackendUi();
         });
     connect(m_glWindow, &GLWindow::loadUnavailable, this, [this](const QString& message) {
-        m_modelOpen = m_glWindow->scene().hasModel();
+        m_modelOpen = m_glWindow->scene().hasMesh();
         m_modelInfo->setText(message);
         statusBar()->showMessage(message);
         updateBackendUi();
         });
     connect(m_glWindow, &GLWindow::loadFailed, this, [this](const QString& err) {
-        m_modelOpen = m_glWindow->scene().hasModel();
+        m_modelOpen = m_glWindow->scene().hasMesh();
         updateBackendUi();
         QMessageBox::warning(this, "加载失败", err);
         });
@@ -199,12 +199,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         });
 
     // 清空场景后复位状态栏提示
-    connect(m_glWindow, &GLWindow::modelCleared, this, [this]() {
+    connect(m_glWindow, &GLWindow::meshCleared, this, [this]() {
         m_modelInfo->setText("未加载模型  操作: 左键旋转+点击选中 右键点击弹菜单/拖拽平移 滚轮缩放 WASD平移 R复位");
         });
 
     // 加载进度条: 开始显示清零 期间更新 结束隐藏
-    connect(m_glWindow, &GLWindow::modelCleared, this, [this]() {
+    connect(m_glWindow, &GLWindow::meshCleared, this, [this]() {
         m_modelOpen = false;
         updateBackendUi();
         });
@@ -253,16 +253,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     applyTheme(true); // 默认夜间主题
     }
 
-void MainWindow::openModel(const QString& path) { openModels({path}); }
+void MainWindow::openMesh(const QString& path) { openMeshes({path}); }
 
-void MainWindow::openModels(const QStringList& paths) {
+void MainWindow::openMeshes(const QStringList& paths) {
     if (!m_vulkanBackend) {
-        m_glWindow->loadModelsAsync(paths);
+        m_glWindow->loadMeshAsync(paths);
         return;
     }
 
 #if defined(GL3D_HAS_VULKAN)
-    m_vkWindow->loadModelsAsync(paths);
+    m_vkWindow->loadMeshAsync(paths);
 #else
     Q_UNUSED(paths);
 #endif
@@ -329,13 +329,13 @@ void MainWindow::setBackend(bool vulkan) {
         });
         connect(m_vkWindow, &VKWindow::progressChanged,
                 m_loadProgress, &QProgressBar::setValue);
-        connect(m_vkWindow, &VKWindow::modelLoaded, this, [this](const QString& info) {
+        connect(m_vkWindow, &VKWindow::meshLoaded, this, [this](const QString& info) {
             m_modelInfo->setText(info);
             m_modelOpen = true;
             updateBackendUi();
         });
         connect(m_vkWindow, &VKWindow::loadFailed, this, [this](const QString& error) {
-            m_modelOpen = m_vkWindow->scene().hasModel();
+            m_modelOpen = m_vkWindow->scene().hasMesh();
             updateBackendUi();
             QMessageBox::warning(this, "加载失败", error);
         });
@@ -430,10 +430,10 @@ void MainWindow::updateBackendUi() {
 
 void MainWindow::clearScene() {
 #if defined(GL3D_HAS_VULKAN)
-    if(m_vulkanBackend && m_vkWindow) m_vkWindow->clearModel();
+    if(m_vulkanBackend && m_vkWindow) m_vkWindow->clearMesh();
     else
 #endif
-        m_glWindow->deleteModel();
+        m_glWindow->deleteMesh();
     activeView()->setTransformMode(0);
     if(m_curTransform) m_curTransform->setChecked(false);
     m_curTransform=nullptr;

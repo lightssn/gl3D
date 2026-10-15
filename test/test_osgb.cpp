@@ -64,7 +64,7 @@ std::shared_ptr<TileNode> pageTree(const QTemporaryDir& dir,bool missing=false) 
     lod->addChild(triangle(),10,1000000);
     lod->setFileName(1,"detail.osgb"); lod->setRange(1,0,10);
     Mesh mesh; QString error;
-    EXPECT_TRUE(OsgbLoader::load(writeNode(dir,"root.osgb",*lod),mesh,&error)) << error.toStdString();
+    EXPECT_TRUE(OsgbLoader::load(QStringList{writeNode(dir,"root.osgb",*lod)},mesh,&error)) << error.toStdString();
     return mesh.tileRoot;
 }
 
@@ -82,7 +82,7 @@ bool waitPage(TileStream& stream,Mesh& mesh,const Camera& camera) {
 TEST(Osgb, ReadsTextureMaterialAndNormals) {
     QTemporaryDir dir;
     Mesh mesh; QString error;
-    ASSERT_TRUE(OsgbLoader::load(writeNode(dir,QString::fromUtf8("纹理.osgb"),*triangle(true)),mesh,&error)) << error.toStdString();
+    ASSERT_TRUE(OsgbLoader::load(QStringList{writeNode(dir,QString::fromUtf8("纹理.osgb"),*triangle(true))},mesh,&error)) << error.toStdString();
     ASSERT_TRUE(mesh.tileRoot);
     ASSERT_EQ(mesh.tileRoot->geometry.size(),1);
     const auto& part=mesh.tileRoot->geometry[0];
@@ -97,7 +97,7 @@ TEST(Osgb, LargeCoordinatesUseLocalOrigin) {
     osg::ref_ptr<osg::MatrixTransform> transform=new osg::MatrixTransform;
     transform->setMatrix(osg::Matrixd::translate(10000000,20000000,30000000));
     transform->addChild(triangle());
-    Mesh mesh; ASSERT_TRUE(OsgbLoader::load(writeNode(dir,"translated.osgb",*transform),mesh,nullptr));
+    Mesh mesh; ASSERT_TRUE(OsgbLoader::load(QStringList{writeNode(dir,"translated.osgb",*transform)},mesh,nullptr));
     ASSERT_EQ(mesh.tileRoot->children.size(),1);
     const auto& part=mesh.tileRoot->children[0]->geometry[0];
     EXPECT_NEAR(part.vertices[1].px-part.vertices[0].px,2.f,0.001f);
@@ -197,7 +197,7 @@ TEST(TileStream, EditingAndVisibilityApplyToFutureLodPages) {
 TEST(Osgb, MergesSameMaterialWithinNode) {
     QTemporaryDir dir; auto geode=triangle(); auto second=triangle();
     geode->addDrawable(second->getDrawable(0));
-    Mesh mesh; ASSERT_TRUE(OsgbLoader::load(writeNode(dir,"merged.osgb",*geode),mesh,nullptr));
+    Mesh mesh; ASSERT_TRUE(OsgbLoader::load(QStringList{writeNode(dir,"merged.osgb",*geode)},mesh,nullptr));
     ASSERT_EQ(mesh.tileRoot->geometry.size(),1);
     EXPECT_EQ(mesh.tileRoot->geometry[0].indices.size(),6);
 }
@@ -225,7 +225,7 @@ TEST(Osgb, ExternalPageInheritsParentMaterialAndTexture) {
     lod->addChild(triangle(),10,1000000);
     lod->setFileName(1,"detail.osgb"); lod->setRange(1,0,10);
     Mesh mesh;
-    ASSERT_TRUE(OsgbLoader::load(writeNode(dir,"root.osgb",*lod),mesh,nullptr));
+    ASSERT_TRUE(OsgbLoader::load(QStringList{writeNode(dir,"root.osgb",*lod)},mesh,nullptr));
     TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1); stream.uploaded(mesh,0);
     ASSERT_TRUE(waitPage(stream,mesh,camera));
     EXPECT_FLOAT_EQ(mesh.subMeshes[1].diffuseColor.y(),0.4f);
@@ -259,7 +259,7 @@ TEST(TileStream, PixelLodKeepsCoarseUntilDetailReady) {
 
 TEST(Osgb, SceneCopiesDoNotConsumeSharedSourceTree) {
     QTemporaryDir dir; Mesh mesh;
-    ASSERT_TRUE(OsgbLoader::load(writeNode(dir,"source.osgb",*triangle()),mesh,nullptr));
+    ASSERT_TRUE(OsgbLoader::load(QStringList{writeNode(dir,"source.osgb",*triangle())},mesh,nullptr));
     RenderScene first, second; first.setMesh(mesh); second.setMesh(mesh);
     ASSERT_EQ(mesh.tileRoot->geometry.size(),1);
     ASSERT_EQ(first.mesh().subMeshes.size(),1); ASSERT_EQ(second.mesh().subMeshes.size(),1);
@@ -311,7 +311,15 @@ TEST(Osgb, MultipleFilesPreserveRelativeCoordinatesAndIndependentOwners) {
     first->addChild(triangle()); second->addChild(triangle());
     const QStringList paths{writeNode(dir,"first.osgb",*first),writeNode(dir,"second.osgb",*second)};
     Mesh mesh; QString error; int percent=0;
-    ASSERT_TRUE(MeshLoader::loadMany(paths,mesh,&error,[&](int value){percent=value;}))<<error.toStdString();
+    MeshLoader worker;
+    bool loaded=false;
+    QObject::connect(&worker,&MeshLoader::progress,[&](int value){percent=value;});
+    QObject::connect(&worker,&MeshLoader::finished,[&](bool ok,const QString& message,std::shared_ptr<Mesh> result){
+        loaded=ok; error=message;
+        if(result) mesh=std::move(*result);
+    });
+    worker.load(paths);
+    ASSERT_TRUE(loaded)<<error.toStdString();
     EXPECT_EQ(percent,100);
     RenderScene scene; scene.setMesh(std::move(mesh));
     ASSERT_EQ(scene.mesh().subMeshes.size(),2);
@@ -326,7 +334,7 @@ TEST(Osgb, MultipleFilesPreserveRelativeCoordinatesAndIndependentOwners) {
 TEST(Osgb, MultipleRootsKeepSeparateRelativePagePaths) {
     QTemporaryDir first,second; ASSERT_TRUE(pageTree(first)); ASSERT_TRUE(pageTree(second));
     Mesh mesh;
-    ASSERT_TRUE(MeshLoader::loadMany({first.filePath("root.osgb"),second.filePath("root.osgb")},mesh));
+    ASSERT_TRUE(OsgbLoader::load({first.filePath("root.osgb"),second.filePath("root.osgb")},mesh));
     ASSERT_EQ(mesh.tileRoot->children.size(),2);
     EXPECT_NE(mesh.tileRoot->children[0]->children[1]->file,mesh.tileRoot->children[1]->children[1]->file);
     TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1);
@@ -341,9 +349,14 @@ TEST(Osgb, MultipleRootsKeepSeparateRelativePagePaths) {
 }
 
 TEST(Osgb, RejectsMixedMultipleSelection) {
-    Mesh mesh; QString error;
-    EXPECT_FALSE(MeshLoader::loadMany({"first.osgb","second.obj"},mesh,&error));
-    EXPECT_FALSE(error.isEmpty()); EXPECT_FALSE(mesh.tileRoot);
+    MeshLoader worker;
+    bool received=false;
+    QObject::connect(&worker,&MeshLoader::finished,[&](bool ok,const QString& error,std::shared_ptr<Mesh> result){
+        received=true;
+        EXPECT_FALSE(ok); EXPECT_FALSE(error.isEmpty()); EXPECT_FALSE(result);
+    });
+    worker.load({"first.osgb","second.obj"});
+    EXPECT_TRUE(received);
 }
 
 
@@ -371,7 +384,7 @@ TEST(Osgb, IndexBuilderFindsRootsSkipsEmptyAndKeepsPagePaths) {
         ASSERT_TRUE(QFile::copy(output,dataDir.filePath("index.osgb")));
         const QString moved=outputDir.filePath("moved");
         ASSERT_TRUE(QDir().rename(dataDir.path(),moved));
-        Mesh mesh; ASSERT_TRUE(OsgbLoader::load(moved+"/index.osgb",mesh,nullptr));
+        Mesh mesh; ASSERT_TRUE(OsgbLoader::load(QStringList{moved+"/index.osgb"},mesh,nullptr));
         if(!forest) EXPECT_TRUE(mesh.tileRoot->lod);
         TileStream stream(mesh); Camera camera; camera.fitToSphere({0,0,0},1);
         const size_t initial=mesh.subMeshes.size();

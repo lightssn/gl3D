@@ -7,9 +7,8 @@
 
 class GL3D_EXPORT OsgbLoader {
 public:
-    static bool loadMany(const QStringList& paths, Mesh& mesh, QString* error,
+    static bool load(const QStringList& paths, Mesh& mesh, QString* error = nullptr,
         const std::function<void(int)>& progress = {});
-    static bool load(const QString& path, Mesh& mesh, QString* error);
     static std::shared_ptr<TileNode> readPage(const QString& path,
         const std::array<double, 16>& transform, const std::array<double, 3>& origin, QString* error,
         std::shared_ptr<std::atomic_bool> cancel = {},

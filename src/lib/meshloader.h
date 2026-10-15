@@ -7,31 +7,21 @@
 #include <QObject>
 #include <functional>
 
-//模型加载入口 按扩展名分发obj/stl/glb 返回是否成功
-//progress回调0~100进度百分比 可空 加载在调用线程执行(阻塞)
-class GL3D_EXPORT MeshLoader {
-public:
-    static bool loadMany(const QStringList& paths, Mesh& outMesh, QString* err = nullptr,
-                         const std::function<void(int)>& progress = nullptr);
-    static bool load(const QString& path, Mesh& outMesh, QString* err = nullptr,
-                     const std::function<void(int)>& progress = nullptr);
-
-private:
-    static bool loadObj(const QString& path, Mesh& mesh, QString* err,
-                        const std::function<void(int)>& progress);
-    static bool loadStl(const QString& path, Mesh& mesh, QString* err,
-                        const std::function<void(int)>& progress);
-    static bool loadGlb(const QString& path, Mesh& mesh, QString* err,
-                        const std::function<void(int)>& progress);
-};
-
-// 解析工作对象可移至 QThread；两个渲染后端共用相同的进度回调。
-class GL3D_EXPORT ModelLoaderWorker : public QObject {
+//静态接口直接解析；实例移至QThread后通过队列调用load，发出进度和结果。
+class GL3D_EXPORT MeshLoader : public QObject {
     Q_OBJECT
+public:
+    static bool load(const QString& path, Mesh& outMesh, QString* err = nullptr, const std::function<void(int)>& progress = nullptr);
+
 public slots:
-    void load(const QString& path);
-    void loadMany(const QStringList& paths);
+    void load(const QStringList& paths);
+
 signals:
     void progress(int percent);
     void finished(bool ok, const QString& error, std::shared_ptr<Mesh> mesh);
+
+private:
+    static bool loadObj(const QString& path, Mesh& mesh, QString* err, const std::function<void(int)>& progress);
+    static bool loadStl(const QString& path, Mesh& mesh, QString* err, const std::function<void(int)>& progress);
+    static bool loadGlb(const QString& path, Mesh& mesh, QString* err, const std::function<void(int)>& progress);
 };

@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <vector>
 
-class ModelLoaderWorker;
+class MeshLoader;
 
 // Qt 管理 Vulkan surface、swapchain 和同步对象，渲染器负责录制绘制命令。
 class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
@@ -25,15 +25,13 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         bool isReady() const {
             return m_ready;
             }
-        bool loadModel(const QString& path, QString* error = nullptr);
-        bool loadModelAsync(const QString& path);
-        bool loadModelsAsync(const QStringList& paths);
+        bool loadMeshAsync(const QStringList& paths);
         bool isLoading() const {
             return m_loading;
             }
-        void modelUploadFinished();
+        void meshUploadFinished();
         void updateTiles();
-        void clearModel();
+        void clearMesh();
         void resetView();
         void setUpAxis(UpAxis axis) override;
         void setOrtho(bool enabled);
@@ -96,7 +94,7 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
                               qint64 textureCpuBytes, int textureCount, int bufferCount);
         void setFramebufferStats(qint64 bytes, int ownedCount);
         void setDeviceDescription(const QString& name, const QString& version);
-        uint64_t modelRevision() const {
+        uint64_t meshRevision() const {
             return m_modelRevision;
             }
         uint64_t textureRevision() const {
@@ -125,7 +123,7 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
             }
 
     signals:
-        void modelLoaded(const QString& info);
+        void meshLoaded(const QString& info);
         void loadFailed(const QString& error);
         void loadStarted();
         void progressChanged(int percent);
@@ -148,7 +146,7 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         bool m_ready = false;
         bool m_loading = false;
         QThread* m_loadThread = nullptr;
-        ModelLoaderWorker* m_loadWorker = nullptr;
+        MeshLoader* m_loadWorker = nullptr;
         QString m_currentPath;
         RenderScene m_scene;
         uint64_t m_modelRevision = 0;
@@ -186,8 +184,8 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         int m_textureCount = 0, m_bufferCount = 0, m_ownedFramebufferCount = 0;
         QString m_deviceName, m_apiVersion;
         float m_clearColor[3] = {0.13f, 0.13f, 0.16f};
+        void onLoadFinished(bool ok, const QString& error, std::shared_ptr<Mesh> mesh);
         int hitGizmo(const QPoint& pos) const;
         QVector3D gizmoAxis(int index) const;
-        void setLoadedMesh(Mesh mesh, const QString& path);
     };
 #endif

@@ -1,5 +1,4 @@
 #include "renderscene.h"
-#include "meshloader.h"
 #include <algorithm>
 #include <cfloat>
 #include <utility>
@@ -108,14 +107,6 @@ void RenderScene::setTileTransform(int slot,const QMatrix4x4& matrix) {
         }
     }
 
-bool RenderScene::loadModel(const QString& path, QString* error) {
-    Mesh mesh;
-    if (!MeshLoader::load(path, mesh, error))
-        return false;
-    setMesh(std::move(mesh), path);
-    return true;
-    }
-
 void RenderScene::setMesh(Mesh mesh, const QString& path) {
     m_stream.reset();
     invalidateTiles();
@@ -174,7 +165,7 @@ void RenderScene::clear() {
     }
 
 void RenderScene::resetView() {
-    if (hasModel())
+    if (hasMesh())
         m_cameraController.camera().fitToSphere(m_mesh.center(), m_mesh.radius());
     }
 

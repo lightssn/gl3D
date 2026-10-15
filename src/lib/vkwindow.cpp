@@ -237,7 +237,7 @@ class VKWindowRenderer final : public QVulkanWindowRenderer {
                                 destroyBuffer(m_indexBuffer, m_indexMemory);
                                 destroyBuffer(m_overlayBuffer, m_overlayMemory);
                                 destroyBuffer(m_gridBuffer, m_gridMemory);
-                                destroyModelDescriptors();
+                                destroyMeshDescriptors();
                                 destroyTextures();
                                 destroyTileGeometry();
                                 destroyTexture(m_whiteTexture);
@@ -252,12 +252,12 @@ class VKWindowRenderer final : public QVulkanWindowRenderer {
 
     void startNextFrame() override {
             m_window->updateTiles();
-            createModelBuffers();
+            createMeshBuffers();
             if(m_window->scene().tiled()) syncTiles();
             if (m_uniformImageCount && m_uniformImageCount != m_window->swapChainImageCount()) {
                 m_df->vkDeviceWaitIdle(m_device);
-                    destroyModelDescriptors();
-                    if (!createModelDescriptors()) qWarning() << "Vulkan descriptors could not be resized for swapchain";
+                    destroyMeshDescriptors();
+                    if (!createMeshDescriptors()) qWarning() << "Vulkan descriptors could not be resized for swapchain";
                     updateResourceStats();
                     }
             if (m_uploadedGridRevision != m_window->gridRevision()) rebuildGrid();
@@ -273,7 +273,7 @@ class VKWindowRenderer final : public QVulkanWindowRenderer {
                     if (m_singleSamplePass) createOverlayPipeline(true, true);
                     m_pipelineRevision = m_window->pipelineRevision();
                     }
-            if (m_window->scene().hasModel() && m_uploadedTextureRevision != m_window->textureRevision())
+            if (m_window->scene().hasMesh() && m_uploadedTextureRevision != m_window->textureRevision())
             rebuildTextures();
             QPoint pickPosition;
             if (m_window->takePendingPick(pickPosition)) {
@@ -320,7 +320,7 @@ class VKWindowRenderer final : public QVulkanWindowRenderer {
                 m_df->vkCmdDraw(cmd, m_gridVertexCount, 1, 0, 0);
                 ++drawCalls;
                 }
-            if (modelPipeline && (m_indexBuffer || m_window->scene().tiled()) && m_uniformBuffer && m_window->scene().hasModel()) {
+            if (modelPipeline && (m_indexBuffer || m_window->scene().tiled()) && m_uniformBuffer && m_window->scene().hasMesh()) {
             const RenderOptions& options = m_window->scene().options();
                 // Qt 已等待当前交换链图像的上一次绘制结束，按图像隔离 UBO 可避免帧间改写。
                 const VkDeviceSize frameOffset = m_uniformStride * uniformCount() * imageIndex;
@@ -434,7 +434,7 @@ class VKWindowRenderer final : public QVulkanWindowRenderer {
                     ++drawCalls;
                     }
                 }
-            else if (m_window->scene().hasModel() && !m_reportedDrawFailure) {
+            else if (m_window->scene().hasMesh() && !m_reportedDrawFailure) {
             qWarning() << "Vulkan model draw skipped: pipeline=" << bool(m_pipeline)
                            << "indexBuffer=" << bool(m_indexBuffer)
                            << "ranges=" << m_ranges.size()
@@ -442,7 +442,7 @@ class VKWindowRenderer final : public QVulkanWindowRenderer {
                            << "indices=" << m_uploadedIndexCount;
                 m_reportedDrawFailure = true;
                 }
-            if (m_window->scene().hasModel() && m_window->scene().options().showAxes &&
+            if (m_window->scene().hasMesh() && m_window->scene().options().showAxes &&
                     overlayPipeline && m_overlayBuffer) {
             const QMatrix4x4 mvp = m_window->clipCorrectionMatrix() *
                                        makeAxesHudMatrix(frame.view, size);
@@ -477,8 +477,7 @@ private:
             memory = VK_NULL_HANDLE;
             }
 
-        bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data,
-                          VkBuffer& buffer, VkDeviceMemory& memory, VkDeviceSize* allocated = nullptr) {
+        bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data, VkBuffer& buffer, VkDeviceMemory& memory, VkDeviceSize* allocated = nullptr) {
             VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
             info.size = size;
             info.usage = usage;
@@ -491,8 +490,7 @@ private:
             VkMemoryRequirements requirements{};
             m_df->vkGetBufferMemoryRequirements(m_device, buffer, &requirements);
             if (allocated) *allocated = requirements.size;
-            const uint32_t type = findMemoryType(requirements.memoryTypeBits,
-                                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            const uint32_t type = findMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             if (type == UINT32_MAX) {
                 qWarning() << "No suitable Vulkan memory type for buffer size" << size;
                 destroyBuffer(buffer, memory);
@@ -505,8 +503,7 @@ private:
             const VkResult bindResult = allocateResult == VK_SUCCESS
                                         ? m_df->vkBindBufferMemory(m_device, buffer, memory, 0) : allocateResult;
             if (allocateResult != VK_SUCCESS || bindResult != VK_SUCCESS) {
-                qWarning() << "Vulkan buffer memory failed: allocate=" << allocateResult
-                           << "bind=" << bindResult << "size=" << size;
+                qWarning() << "Vulkan buffer memory failed: allocate=" << allocateResult << "bind=" << bindResult << "size=" << size;
                 destroyBuffer(buffer, memory);
                 return false;
                 }
@@ -531,7 +528,7 @@ private:
             m_gridAllocation = 0;
             const Mesh& mesh = m_window->scene().mesh();
             const float radius = mesh.radius();
-            if (m_window->scene().hasModel() && radius > 0.0f) {
+            if (m_window->scene().hasMesh() && radius > 0.0f) {
                 std::vector<OverlayVertex> vertices;
                 const float* clear = m_window->clearColor();
                 const float luminance = (clear[0] + clear[1] + clear[2]) / 3.0f;
@@ -596,7 +593,7 @@ private:
                 }
             }
 
-        void destroyModelDescriptors() {
+        void destroyMeshDescriptors() {
             if (m_descriptorPool) m_df->vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
             destroyBuffer(m_uniformBuffer, m_uniformMemory);
             m_descriptorPool = VK_NULL_HANDLE;
@@ -745,7 +742,7 @@ private:
             return true;
             }
 
-        bool createModelDescriptors() {
+        bool createMeshDescriptors() {
             if (m_ranges.isEmpty() || !m_descriptorLayout) return false;
             const uint32_t count = uint32_t(uniformCount());
             const int imageCount = m_window->swapChainImageCount();
@@ -1044,7 +1041,7 @@ private:
             }
 
         int pickAt(const QPoint& position) {
-            if (!m_window->scene().hasModel()) return -1;
+            if (!m_window->scene().hasMesh()) return -1;
             if (!m_pick.pipeline || !m_pick.framebuffer || !m_pick.readback ||
                     (!m_indexBuffer && !m_window->scene().tiled()) || !m_uniformBuffer) return -2;
             const QSize size = m_window->swapChainImageSize();
@@ -1204,9 +1201,9 @@ private:
             if(!m_descriptorPool || m_tileCapacity<mesh.subMeshes.size()) {
                 m_df->vkDeviceWaitIdle(m_device);
                 waited=true;
-                destroyModelDescriptors();
+                destroyMeshDescriptors();
                 while(m_tileCapacity<mesh.subMeshes.size()) m_tileCapacity*=2;
-                if(!createModelDescriptors()) return;
+                if(!createMeshDescriptors()) return;
                 }
             for(size_t i=0; i<mesh.subMeshes.size(); ++i) {
                 const auto& part=mesh.subMeshes[i];
@@ -1257,11 +1254,11 @@ private:
                 }
             }
 
-        void createModelBuffers() {
-            if (!m_df || m_uploadedRevision == m_window->modelRevision()) return;
+        void createMeshBuffers() {
+            if (!m_df || m_uploadedRevision == m_window->meshRevision()) return;
             m_drawOrderDirty = true;
             m_df->vkDeviceWaitIdle(m_device);
-            destroyModelDescriptors();
+            destroyMeshDescriptors();
             destroyTextures();
             destroyTileGeometry();
             destroyTexture(m_whiteTexture);
@@ -1276,8 +1273,8 @@ private:
             m_ranges.clear();
             m_uploadedIndexCount = 0;
             m_uploadedVertexCount = 0;
-            if (!m_window->scene().hasModel()) {
-                m_uploadedRevision = m_window->modelRevision();
+            if (!m_window->scene().hasMesh()) {
+                m_uploadedRevision = m_window->meshRevision();
                 m_uploadedGridRevision = m_window->gridRevision();
                 m_window->setResourceStats(m_overlayAllocation + m_pick.readbackAllocation, 0, 0, 0, 0,
                                            int(bool(m_overlayBuffer)) + int(bool(m_pick.readback)));
@@ -1286,8 +1283,8 @@ private:
             const Mesh& mesh = m_window->scene().mesh();
             rebuildGrid();
             if(m_window->scene().tiled()) {
-                m_uploadedRevision=m_window->modelRevision();
-                m_window->modelUploadFinished();
+                m_uploadedRevision=m_window->meshRevision();
+                m_window->meshUploadFinished();
                 return;
                 }
             std::vector<Vertex> vertices;
@@ -1318,7 +1315,7 @@ private:
                 destroyBuffer(m_vertexBuffer, m_vertexMemory);
                 destroyBuffer(m_indexBuffer, m_indexMemory);
                 m_ranges.clear();
-                if(vertices.empty() || indices.empty()) m_uploadedRevision=m_window->modelRevision();
+                if(vertices.empty() || indices.empty()) m_uploadedRevision=m_window->meshRevision();
                 return;
                 }
             if (!m_whiteTexture.view) {
@@ -1330,7 +1327,7 @@ private:
                     }
                 }
             rebuildTextures();
-            m_uploadedRevision = m_window->modelRevision();
+            m_uploadedRevision = m_window->meshRevision();
             m_uploadedVertexCount = int(vertices.size());
             m_uploadedIndexCount = int(indices.size());
             m_reportedDrawFailure = false;
@@ -1338,12 +1335,12 @@ private:
                     << "indices=" << m_uploadedIndexCount << "ranges=" << m_ranges.size();
             // Vulkan 缓冲已经建立，释放 CPU 顶点和索引；场景元数据仍然保留。
             m_window->scene().mesh().releaseGeometry();
-            m_window->modelUploadFinished();
+            m_window->meshUploadFinished();
             }
 
         void rebuildTextures() {
             m_df->vkDeviceWaitIdle(m_device);
-            destroyModelDescriptors();
+            destroyMeshDescriptors();
             destroyTextures();
             destroyTexture(m_whiteTexture);
             if(!createTexture(m_whiteTexture)) return;
@@ -1354,7 +1351,7 @@ private:
                         })
                     if (!texture->source.isNull() && !createTexture(*texture)) uploaded = false;
             if (!uploaded) qWarning() << "One or more Vulkan textures could not be uploaded";
-            if (!createModelDescriptors()) qWarning() << "Vulkan model descriptors unavailable";
+            if (!createMeshDescriptors()) qWarning() << "Vulkan model descriptors unavailable";
             m_uploadedTextureRevision = m_window->textureRevision();
             updateResourceStats();
             }
@@ -1699,49 +1696,67 @@ VKWindow::~VKWindow() {
         }
     }
 
-bool VKWindow::loadModel(const QString& path, QString* error) {
-    Mesh mesh;
-    if (!MeshLoader::load(path, mesh, error)) return false;
-    setLoadedMesh(std::move(mesh), path);
-    return true;
-    }
-
-bool VKWindow::loadModelAsync(const QString& path) {
-    return loadModelsAsync({path});
-    }
-
-bool VKWindow::loadModelsAsync(const QStringList& paths) {
+bool VKWindow::loadMeshAsync(const QStringList& paths) {
     if (m_loading) return false;
     if (!m_loadThread) {
         qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
         m_loadThread = new QThread(this);
-        m_loadWorker = new ModelLoaderWorker;
+        m_loadWorker = new MeshLoader;
         m_loadWorker->moveToThread(m_loadThread);
-        connect(m_loadWorker, &ModelLoaderWorker::progress, this, [this](int percent) {
+        connect(m_loadWorker, &MeshLoader::progress, this, [this](int percent) {
             if (m_loading) emit progressChanged(std::min(90, percent * 9 / 10));
             });
-        connect(m_loadWorker, &ModelLoaderWorker::finished, this,
-        [this](bool ok, const QString& error, std::shared_ptr<Mesh> mesh) {
-            if (!m_loading) return;
-            if (!ok || !mesh) {
-                m_loading = false;
-                emit loadFailed(error.isEmpty() ? QStringLiteral("加载失败") : error);
-                emit loadFinished();
-                return;
-                }
-            setLoadedMesh(std::move(*mesh), m_currentPath);
-            emit progressChanged(90);
-            });
+        connect(m_loadWorker, &MeshLoader::finished, this, &VKWindow::onLoadFinished);
         m_loadThread->start();
         }
     m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
     m_loading = true;
     emit loadStarted();
-    QMetaObject::invokeMethod(m_loadWorker, "loadMany", Qt::QueuedConnection, Q_ARG(QStringList, paths));
+    QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection, Q_ARG(QStringList, paths));
     return true;
     }
 
-void VKWindow::modelUploadFinished() {
+void VKWindow::onLoadFinished(bool ok, const QString& error, std::shared_ptr<Mesh> mesh) {
+    if (!m_loading) return;
+    if (!ok || !mesh) {
+        m_loading = false;
+        emit loadFailed(error.isEmpty() ? QStringLiteral("加载失败") : error);
+        emit loadFinished();
+        return;
+        }
+    m_scene.setMesh(std::move(*mesh), m_currentPath);
+    m_edit.reset();
+    if(m_scene.tiled()) {
+        m_scene.options().pbr=false;
+        m_scene.options().normalMap=false;
+        }
+    m_bounds.clear();
+    m_visible.assign(m_scene.mesh().subMeshes.size(), true);
+    m_transforms.assign(m_scene.mesh().subMeshes.size(), TransformState());
+    for (const SubMesh& subMesh : m_scene.mesh().subMeshes) {
+        Bounds bounds{QVector3D(FLT_MAX, FLT_MAX, FLT_MAX), QVector3D(-FLT_MAX, -FLT_MAX, -FLT_MAX)};
+        for (const Vertex& vertex : subMesh.vertices) {
+            const QVector3D point(vertex.px, vertex.py, vertex.pz);
+            bounds.min.setX(std::min(bounds.min.x(), point.x()));
+            bounds.min.setY(std::min(bounds.min.y(), point.y()));
+            bounds.min.setZ(std::min(bounds.min.z(), point.z()));
+            bounds.max.setX(std::max(bounds.max.x(), point.x()));
+            bounds.max.setY(std::max(bounds.max.y(), point.y()));
+            bounds.max.setZ(std::max(bounds.max.z(), point.z()));
+            }
+        m_bounds.push_back(bounds);
+        }
+    m_pendingPick = QPoint(-1, -1);
+    m_scene.options().outlineWidth = RenderOptions{}.outlineWidth;
+    emit selectionChanged(false);
+    emit historyChanged(false, false);
+    ++m_modelRevision;
+    emit meshLoaded(QString("%1  顶点%2  三角%3  子网格%4").arg(QFileInfo(m_currentPath).fileName()).arg(m_scene.mesh().vertexCount()).arg(m_scene.mesh().triangleCount()).arg(subMeshCount()));
+    requestUpdate();
+    emit progressChanged(90);
+    }
+
+void VKWindow::meshUploadFinished() {
     if (!m_loading) return;
     m_loading = false;
     emit progressChanged(100);
@@ -1771,41 +1786,7 @@ void VKWindow::updateTiles() {
         }
     }
 
-void VKWindow::setLoadedMesh(Mesh mesh, const QString& path) {
-    m_scene.setMesh(std::move(mesh), path);
-    m_edit.reset();
-    if(m_scene.tiled()) {
-        m_scene.options().pbr=false;
-        m_scene.options().normalMap=false;
-        }
-    m_bounds.clear();
-    m_visible.assign(m_scene.mesh().subMeshes.size(), true);
-    m_transforms.assign(m_scene.mesh().subMeshes.size(), TransformState());
-    for (const SubMesh& subMesh : m_scene.mesh().subMeshes) {
-        Bounds bounds{QVector3D(FLT_MAX, FLT_MAX, FLT_MAX), QVector3D(-FLT_MAX, -FLT_MAX, -FLT_MAX)};
-        for (const Vertex& vertex : subMesh.vertices) {
-            const QVector3D point(vertex.px, vertex.py, vertex.pz);
-            bounds.min.setX(std::min(bounds.min.x(), point.x()));
-            bounds.min.setY(std::min(bounds.min.y(), point.y()));
-            bounds.min.setZ(std::min(bounds.min.z(), point.z()));
-            bounds.max.setX(std::max(bounds.max.x(), point.x()));
-            bounds.max.setY(std::max(bounds.max.y(), point.y()));
-            bounds.max.setZ(std::max(bounds.max.z(), point.z()));
-            }
-        m_bounds.push_back(bounds);
-        }
-    m_pendingPick = QPoint(-1, -1);
-    m_scene.options().outlineWidth = RenderOptions{}.outlineWidth;
-    emit selectionChanged(false);
-    emit historyChanged(false, false);
-    ++m_modelRevision;
-    emit modelLoaded(QString("%1  顶点%2  三角%3  子网格%4")
-                     .arg(QFileInfo(path).fileName()).arg(m_scene.mesh().vertexCount())
-                     .arg(m_scene.mesh().triangleCount()).arg(subMeshCount()));
-    requestUpdate();
-    }
-
-void VKWindow::clearModel() {
+void VKWindow::clearMesh() {
     m_edit.reset();
     m_idleFpsTimer.stop();
     ++m_gridRevision;

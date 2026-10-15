@@ -2,6 +2,7 @@
 #include "glcontext.h"
 #include <QFile>
 #include <QByteArray>
+#include <QString>
 #include <cstdio>
 
 Shader::~Shader() { cleanup(); }

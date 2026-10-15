@@ -46,14 +46,6 @@ GLWindow::GLWindow(QWindow* parent) : QOpenGLWindow(QOpenGLWindow::NoPartialUpda
         }
     });
 
-    //后台加载线程 解析在worker线程 跨线程信号按队列转发
-    qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
-    m_loadThread = new QThread(this);
-    m_loadWorker = new ModelLoaderWorker();
-    m_loadWorker->moveToThread(m_loadThread);
-    connect(m_loadWorker, &ModelLoaderWorker::progress, this, [this](int p) { emit progressChanged(p); });
-    connect(m_loadWorker, &ModelLoaderWorker::finished, this, [this](bool ok, const QString& err, std::shared_ptr<Mesh> mesh) { onLoadFinished(ok, err, std::move(mesh)); });
-    m_loadThread->start();
     }
 
 GLWindow::~GLWindow() {
@@ -115,7 +107,7 @@ void GLWindow::initializeGL() {
         if(m_pendingLoadPaths.isEmpty()) return;
         const QStringList paths=std::move(m_pendingLoadPaths);
         m_pendingLoadPaths.clear();
-        loadModelsAsync(paths);
+        loadMeshAsync(paths);
     });
     }
 
@@ -157,7 +149,7 @@ void GLWindow::paintGL() {
         // 任务完成与过期回收必须继续推进，固定帧率模式由定时器驱动。
         if(!m_fixedFps && m_scene.needsTileRedraw()) update();
     }
-    if (!m_shader || !m_shader->isValid() || !hasModel()) { m_lastDrawCalls = 0; m_idleFpsTimer->start(1000); return; }
+    if (!m_shader || !m_shader->isValid() || !hasMesh()) { m_lastDrawCalls = 0; m_idleFpsTimer->start(1000); return; }
     if(m_gizmoDirty) { rebuildGizmo(); m_gizmoDirty=false; }
 
     const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()));
@@ -263,7 +255,7 @@ DebugSnapshot GLWindow::collectDebugSnapshot() {
     }
     s.fov = m_camera.fov(); s.distance = m_camera.distance();
     s.eye = m_camera.eye(); s.target = m_camera.target(); s.ortho = m_camera.ortho();
-    s.antialiasing = m_antialiasing; s.modelLoaded = hasModel();
+    s.antialiasing = m_antialiasing; s.modelLoaded = hasMesh();
     if (!isValid() || !m_renderer) return s;
     auto& gl = GLFunctions::instance();
     const auto* renderer = gl.glGetString(GL_RENDERER);
@@ -514,7 +506,7 @@ void GLWindow::createPickTarget(int w, int h) {
 //左键拾取 模型渲染为纯红 读取点击处像素判断命中
 //鼠标事件中GL上下文非当前 须makeCurrent后再操作
 void GLWindow::pickAt(const QPoint& pos) {
-    if (!hasModel() || !isValid()) {
+    if (!hasMesh() || !isValid()) {
         update();
         return;
         }
@@ -577,13 +569,11 @@ void GLWindow::pickAt(const QPoint& pos) {
     update();
     }
 
-bool GLWindow::hasModel() const {
+bool GLWindow::hasMesh() const {
     return m_scene.tiled() || (m_renderer && !m_renderer->empty());
     }
 
-bool GLWindow::loadModel(const QString& path) { return loadModelsAsync({path}); }
-
-bool GLWindow::loadModelsAsync(const QStringList& paths) {
+bool GLWindow::loadMeshAsync(const QStringList& paths) {
     if (m_loading) return false; //加载进行中 忽略重复请求
     if (!isValid() || !m_renderer) {
         if(!m_renderer) {
@@ -594,12 +584,20 @@ bool GLWindow::loadModelsAsync(const QStringList& paths) {
         emit loadUnavailable(QStringLiteral("OpenGL 上下文尚未就绪，未加载模型，请稍后重新打开。"));
         return false;
         }
+    if (!m_loadThread) {
+        qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
+        m_loadThread = new QThread(this);
+        m_loadWorker = new MeshLoader;
+        m_loadWorker->moveToThread(m_loadThread);
+        connect(m_loadWorker, &MeshLoader::progress, this, [this](int percent) { emit progressChanged(percent); });
+        connect(m_loadWorker, &MeshLoader::finished, this, &GLWindow::onLoadFinished);
+        m_loadThread->start();
+        }
     m_loading = true;
     m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
     emit loadStarted(); //主窗口显示进度条
     //解析交后台线程 完成回调onLoadFinished 不做GPU上传与取景
-    QMetaObject::invokeMethod(m_loadWorker, "loadMany", Qt::QueuedConnection,
-                              Q_ARG(QStringList, paths));
+    QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection, Q_ARG(QStringList, paths));
     return true;
     }
 
@@ -632,7 +630,7 @@ void GLWindow::onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh>
     m_transformScale = QVector3D(1, 1, 1);
     m_dragAxis = 0;
     emit historyChanged(false, false);
-    updateModelMatrix();
+    updateMeshMatrix();
     m_selectedSubMesh = -1;
     emit selectionChanged(false); //新模型默认未选中 操作器按钮隐藏
 
@@ -641,7 +639,7 @@ void GLWindow::onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh>
                    .arg(m_mesh.vertexCount())
                    .arg(m_mesh.triangleCount())
                    .arg((int)m_mesh.subMeshes.size());
-    emit modelLoaded(info);
+    emit meshLoaded(info);
     // GPU 资源已经上传，CPU 侧只保留材质、纹理、包围盒和统计信息。
     if(!m_scene.tiled()) m_mesh.releaseGeometry();
     emit loadFinished();
@@ -663,14 +661,14 @@ void GLWindow::setClearColor(float r, float g, float b) {
     makeCurrent();
     auto& gl = GLFunctions::instance();
     gl.glClearColor(r, g, b, 1.0f);
-    if (hasModel()) rebuildGrid(); //网格色随主题刷新
+    if (hasMesh()) rebuildGrid(); //网格色随主题刷新
     doneCurrent();
     update();
     }
 
 //清除模型 释放GPU资源 隐藏操作器并复位选中状态
-void GLWindow::deleteModel() {
-    if (!hasModel() && m_pendingLoadPaths.isEmpty()) return;
+void GLWindow::deleteMesh() {
+    if (!hasMesh() && m_pendingLoadPaths.isEmpty()) return;
     m_pendingLoadPaths.clear();
     if(isValid() && m_renderer) {
         makeCurrent(); // GL cleanup requires a valid current context.
@@ -691,7 +689,7 @@ void GLWindow::deleteModel() {
     emit historyChanged(false, false);
     m_selectedSubMesh = -1;
     emit selectionChanged(false); //联动隐藏操作器
-    emit modelCleared();
+    emit meshCleared();
     update();
     }
 
@@ -704,7 +702,7 @@ void GLWindow::setTransformMode(int mode) {
     m_transformMode = static_cast<TransformMode>(mode);
     m_dragAxis = 0; //切换模式放弃进行中的拖拽
     //工具按钮点击在事件回调中 非绘制期 GL上下文不当前 须makeCurrent再重建手柄
-    if (hasModel() && m_overlayShader && m_overlayShader->isValid() && isValid()) {
+    if (hasMesh() && m_overlayShader && m_overlayShader->isValid() && isValid()) {
         makeCurrent();
         rebuildGizmo();
         doneCurrent();
@@ -766,7 +764,7 @@ void GLWindow::selectSubMesh(int index) {
     }
     if(!m_scene.tiled()) m_edit.selectState(index);
     m_gizmoDirty=true;
-    updateModelMatrix();
+    updateMeshMatrix();
     emit historyChanged(false, false);
     emit selectionChanged(m_selectedSubMesh >= 0);
     emit subMeshSelected(m_selectedSubMesh);
@@ -824,7 +822,7 @@ void GLWindow::setUpAxis(UpAxis axis) {
 void GLWindow::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); update(); }
 
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移
-void GLWindow::updateModelMatrix() {
+void GLWindow::updateMeshMatrix() {
     QVector3D c = m_selectedSubMesh >= 0 && m_selectedSubMesh < static_cast<int>(m_subMeshCenters.size())
         ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center();
     m_modelMatrix = currentTransform().matrix(c);
@@ -918,7 +916,7 @@ float GLWindow::gizmoAngle(const QPoint& pos, int axis) {
 
 //命中测试 逐轴将手柄投影到屏幕 取像素距离最近且小于阈值的轴
 int GLWindow::gizmoHitAxis(const QPoint& pos) {
-    if (m_transformMode == None || !hasModel() || !m_showGizmo) return 0;
+    if (m_transformMode == None || !hasMesh() || !m_showGizmo) return 0;
     const QVector3D center = (m_selectedSubMesh >= 0 ? m_subMeshCenters[size_t(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
     const auto frame = makeRenderFrame(m_scene, size());
     const QMatrix4x4 matrix = makeGizmoMatrix(frame.view, frame.projection, center, size());
@@ -998,7 +996,7 @@ void GLWindow::dragGizmo(const QPoint& pos) {
         else if (m_dragAxis == 2) m_transformScale.setY(v);
         else m_transformScale.setZ(v);
         }
-    updateModelMatrix();
+    updateMeshMatrix();
     if (!m_fixedFps) update();
     }
 
@@ -1014,7 +1012,7 @@ GLWindow::TransformState GLWindow::currentTransform() const {
 // Apply shared history state and refresh the window-owned overlays.
 void GLWindow::applyTransform(const TransformState& s) {
     m_edit.current() = s;
-    updateModelMatrix();
+    updateMeshMatrix();
     if (m_transformMode != None && m_overlayShader && m_overlayShader->isValid() && isValid()) {
         makeCurrent();
         rebuildGizmo();
@@ -1043,7 +1041,7 @@ void GLWindow::mousePressEvent(QMouseEvent* event) {
     m_lastMousePos = event->pos();
     m_dragButton = event->button();
     //左键按下命中操作器手柄 进入变换拖拽 不再旋转相机
-    if (event->button() == Qt::LeftButton && m_transformMode != None && hasModel()) {
+    if (event->button() == Qt::LeftButton && m_transformMode != None && hasMesh()) {
         int axis = gizmoHitAxis(event->pos());
         if (axis) {
             m_dragAxis = axis;

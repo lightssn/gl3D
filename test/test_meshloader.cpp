@@ -161,7 +161,7 @@ TEST_F(MeshLoaderTest, QueuedResultMovesGeometryWithoutCopy) {
     qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
     const QString path=write("queued.obj","v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
     QThread thread;
-    auto* worker=new ModelLoaderWorker;
+    auto* worker=new MeshLoader;
     worker->moveToThread(&thread);
     QObject::connect(&thread,&QThread::finished,worker,&QObject::deleteLater);
     QEventLoop loop;
@@ -171,14 +171,14 @@ TEST_F(MeshLoaderTest, QueuedResultMovesGeometryWithoutCopy) {
     const unsigned* indices=nullptr;
     std::weak_ptr<Mesh> lifetime;
     bool received=false;
-    QObject::connect(worker,&ModelLoaderWorker::finished,&loop,
+    QObject::connect(worker,&MeshLoader::finished,&loop,
         [&](bool ok,const QString&,std::shared_ptr<Mesh> mesh) {
             if(ok && mesh && !mesh->subMeshes.empty()) {
                 source=mesh.get(); vertices=mesh->subMeshes[0].vertices.data();
                 indices=mesh->subMeshes[0].indices.data(); lifetime=mesh;
             }
         },Qt::DirectConnection);
-    QObject::connect(worker,&ModelLoaderWorker::finished,&loop,
+    QObject::connect(worker,&MeshLoader::finished,&loop,
         [&](bool ok,const QString& error,std::shared_ptr<Mesh> mesh) {
             received=true;
             EXPECT_TRUE(ok) << qPrintable(error);
@@ -193,7 +193,8 @@ TEST_F(MeshLoaderTest, QueuedResultMovesGeometryWithoutCopy) {
             loop.quit();
         },Qt::QueuedConnection);
     thread.start();
-    QMetaObject::invokeMethod(worker,"load",Qt::QueuedConnection,Q_ARG(QString,path));
+    const QStringList paths{path};
+    QMetaObject::invokeMethod(worker,"load",Qt::QueuedConnection,Q_ARG(QStringList,paths));
     QTimer::singleShot(5000,&loop,&QEventLoop::quit);
     loop.exec(); thread.quit(); thread.wait();
     EXPECT_TRUE(received);
@@ -204,7 +205,7 @@ TEST_F(MeshLoaderTest, QueuedResultMovesGeometryWithoutCopy) {
 TEST(MeshLoader, QueuedResultKeepsOriginalOsgbTree) {
     qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
     QThread thread;
-    auto* worker=new ModelLoaderWorker;
+    auto* worker=new MeshLoader;
     worker->moveToThread(&thread);
     QObject::connect(&thread,&QThread::finished,worker,&QObject::deleteLater);
     QEventLoop loop;
@@ -212,7 +213,7 @@ TEST(MeshLoader, QueuedResultKeepsOriginalOsgbTree) {
     const TileNode* root=nullptr;
     const Vertex* vertices=nullptr;
     bool received=false;
-    QObject::connect(worker,&ModelLoaderWorker::finished,&loop,
+    QObject::connect(worker,&MeshLoader::finished,&loop,
         [&](bool,const QString&,std::shared_ptr<Mesh> mesh) {
             received=true;
             EXPECT_EQ(mesh->tileRoot.get(),root);

@@ -442,7 +442,7 @@ DebugSnapshot VKWindow::debugSnapshot()
     snapshot.target = camera.target();
     snapshot.ortho = camera.ortho();
     snapshot.antialiasing = m_scene.options().antialiasing;
-    snapshot.modelLoaded = m_scene.hasModel();
+    snapshot.modelLoaded = m_scene.hasMesh();
     snapshot.renderer = m_deviceName;
     snapshot.glVersion = m_apiVersion;
     snapshot.resources = {{"VAO", 0, 0, 0, false}, {"缓冲", m_bufferCount, 0, m_vertexBytes, true},

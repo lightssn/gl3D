@@ -12,12 +12,11 @@
 class GL3D_EXPORT RenderScene final {
 public:
     ~RenderScene();
-    bool loadModel(const QString& path, QString* error = nullptr);
     void setMesh(Mesh mesh, const QString& path = QString());
     void clear();
     void resetView();
 
-    bool hasModel() const { return m_mesh.tileRoot || !m_mesh.subMeshes.empty(); }
+    bool hasMesh() const { return m_mesh.tileRoot || !m_mesh.subMeshes.empty(); }
     bool tiled() const { return bool(m_stream); }
     int tileRepresentative(int slot) const;
     bool sameTile(int a, int b) const;

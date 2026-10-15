@@ -20,12 +20,12 @@
 #include <windows.h>
 #endif
 
-bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
-                      const std::function<void(int)>& progress) {
+//静态解析接口，供内部调用
+bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err, const std::function<void(int)>& progress) {
     outMesh = Mesh{};
     QString suffix = QFileInfo(path).suffix().toLower();
 #if defined(GL3D_HAS_OSGB)
-    if (suffix == "osgb") return OsgbLoader::load(path, outMesh, err);
+    if (suffix == "osgb") return OsgbLoader::load(QStringList{path}, outMesh, err, progress);
 #endif
     bool ok = false;
     if (suffix == "obj") ok = loadObj(path, outMesh, err, progress);
@@ -51,28 +51,27 @@ bool MeshLoader::load(const QString& path, Mesh& outMesh, QString* err,
     return true;
     }
 
-bool MeshLoader::loadMany(const QStringList& paths, Mesh& mesh, QString* error, const std::function<void(int)>& progress) {
-    if(paths.size()==1) return load(paths.front(),mesh,error,progress);
-    mesh=Mesh{};
-#if defined(GL3D_HAS_OSGB)
-    if(!paths.isEmpty() && std::all_of(paths.begin(),paths.end(),[](const QString& path) {
-        return QFileInfo(path).suffix().compare("osgb",Qt::CaseInsensitive)==0;
-    })) return OsgbLoader::loadMany(paths,mesh,error,progress);
-#endif
-    if(error) *error=QStringLiteral("Multiple selection supports OSGB files only");
-    return false;
-}
-
-void ModelLoaderWorker::loadMany(const QStringList& paths) {
+//供外部异步实例调用
+void MeshLoader::load(const QStringList& paths) {
     auto mesh = std::make_shared<Mesh>();
     QString error;
-    const bool ok = MeshLoader::loadMany(paths, *mesh, &error, [this](int percent) { emit progress(percent); });
+    const auto progress = [this](int percent) { emit this->progress(percent); };
+    bool ok = false;
+    if (paths.size() == 1) {
+        ok = MeshLoader::load(paths.front(), *mesh, &error, progress);
+    }
+#if defined(GL3D_HAS_OSGB)
+    else if (!paths.isEmpty() && std::all_of(paths.begin(), paths.end(), [](const QString& path) {
+        return QFileInfo(path).suffix().compare("osgb", Qt::CaseInsensitive) == 0;
+    })) {
+        ok = OsgbLoader::load(paths, *mesh, &error, progress);
+    }
+#endif
+    else {
+        error = QStringLiteral("Multiple selection supports OSGB files only");
+    }
     if (!ok) mesh.reset();
-    emit finished(ok, error, std::move(mesh));//move左值转右值引用，标记可移动
-}
-
-void ModelLoaderWorker::load(const QString& path) {
-    loadMany({path});
+    emit finished(ok, error, std::move(mesh));
 }
 
 //mtl材质参数
@@ -99,10 +98,10 @@ static QString decodeTextFile(const QByteArray& data) {
         std::wstring wide(static_cast<size_t>(length), L'\0');
         MultiByteToWideChar(936, 0, bytes.constData(), bytes.size(), wide.data(), length);
         local = QString::fromWCharArray(wide.data(), length);
-    }
+        }
     else {
         local = QString::fromLocal8Bit(bytes);
-    }
+        }
 #else
     local = QString::fromLocal8Bit(bytes);
 #endif
@@ -121,12 +120,12 @@ static QString decodeTextFile(const QByteArray& data) {
         for (const QChar ch : value) {
             const ushort u = ch.unicode();
             if ((u >= 0x3400 && u <= 0x4DBF) ||
-                (u >= 0x4E00 && u <= 0x9FFF) ||
-                (u >= 0xF900 && u <= 0xFAFF))
+                    (u >= 0x4E00 && u <= 0x9FFF) ||
+                    (u >= 0xF900 && u <= 0xFAFF))
                 ++count;
-        }
+            }
         return count;
-    };
+        };
     return cjkCount(local) > cjkCount(utf8) ? local : utf8;
     }
 
@@ -170,8 +169,7 @@ static QString resolveTexture(const QString& objDir, const QString& relPath) {
     return QString();
     }
 
-bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
-                         const std::function<void(int)>& progress) {
+bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err, const std::function<void(int)>& progress) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (err) *err = "无法打开: " + path;
@@ -180,7 +178,7 @@ bool MeshLoader::loadObj(const QString& path, Mesh& mesh, QString* err,
     QString text = decodeTextFile(f.readAll());
     //复用首次读取的文本统计进度基准，末行没有换行符时也计入。
     const qint64 totalLines = text.count('\n')
-        + (!text.isEmpty() && !text.endsWith('\n') ? 1 : 0);
+                              + (!text.isEmpty() && !text.endsWith('\n') ? 1 : 0);
     const QString objDir = QFileInfo(path).absolutePath();
 
     //原始属性池 面索引引用它们

@@ -1,6 +1,7 @@
 #pragma once
 #include "gl3d_export.h"
-#include <QString>
+
+class QString;
 
 //着色器程序封装 编译链接uniform设置 
 class GL3D_EXPORT Shader {

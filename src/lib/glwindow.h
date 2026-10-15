@@ -17,12 +17,13 @@
 #include <vector>
 #include <memory>
 
-class Shader;//前向声明，cpp再引入头文件，改动后编译更快
+//前向声明
+class Shader;
 class MeshRenderer;
 class QContextMenuEvent;
 class QThread;
 class QTimer;
-class ModelLoaderWorker; //后台解析线程的工作对象 定义在cpp
+class MeshLoader;
 
 //OpenGL渲染视口 负责context生命周期/渲染循环/键鼠交互
 //交互 左键旋转+点击选中 右键点击弹菜单+右键拖拽平移 滚轮缩放 WASD平移 R复位
@@ -77,7 +78,7 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         //后台加载 解析在worker线程 解析完主线程上传显存
         QThread* m_loadThread = nullptr;
         QStringList m_pendingLoadPaths;
-        ModelLoaderWorker* m_loadWorker = nullptr;
+        MeshLoader* m_loadWorker = nullptr;
         bool m_loading = false; //加载中 防止重复触发
         QString m_currentPath;  //当前加载的模型路径 状态栏显示文件名用
         void onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> mesh);
@@ -144,7 +145,7 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         void drawAxesHud(const QMatrix4x4& view);
 
         //操作器拖拽 射线拾取轴/平面交点 组合模型矩阵
-        void updateModelMatrix();
+        void updateMeshMatrix();
         void pickingRay(const QPoint& pos, QVector3D& origin, QVector3D& dir);
         QPointF projectToScreen(const QMatrix4x4& proj, const QMatrix4x4& view, const QVector3D& p);
         bool rayLineParam(const QVector3D& origin, const QVector3D& dir,
@@ -165,14 +166,13 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         explicit GLWindow(QWindow* parent = nullptr);
         ~GLWindow() override;
 
-        //加载模型文件 成功返回true并发出modelLoaded
-        bool loadModel(const QString& path);
-        bool loadModelsAsync(const QStringList& paths);
+        //加载模型文件 成功返回true并发出meshLoaded
+        bool loadMeshAsync(const QStringList& paths);
         void resetView();
         void setUpAxis(UpAxis axis) override;
         void setClearColor(float r, float g, float b); //主题切换联动视口底色
-        bool hasModel() const;
-        void deleteModel();          //清除当前模型与选中状态
+        bool hasMesh() const;
+        void deleteMesh();          //清除当前模型与选中状态
         bool isLoading() const { return m_loading; }
         void undo();                 //撤销上次变换
         void redo();                 //重做被撤销的变换
@@ -213,13 +213,13 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
 
     signals:
         void fpsUpdated(int fps);
-        void modelLoaded(const QString& info);  //模型统计信息
+        void meshLoaded(const QString& info);  //模型统计信息
         void loadFailed(const QString& err);
         void loadUnavailable(const QString& message);
         void selectionChanged(bool selected); //选中状态变化 联动工具栏操作器按钮
         void subMeshSelected(int index);
         void contextMenuRequested(const QPoint& globalPos); //右键点击 弹出开关栏菜单
-        void modelCleared(); //模型被删除 联动状态栏等
+        void meshCleared(); //模型被删除 联动状态栏等
         void historyChanged(bool canUndo, bool canRedo); //撤销/重做可用性 联动按钮
         void loadStarted();       //开始加载 显示进度条
         void progressChanged(int percent); //加载进度 0~100

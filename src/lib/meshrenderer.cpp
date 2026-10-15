@@ -1,5 +1,6 @@
 #include "meshrenderer.h"
 #include "glcontext.h"
+#include "mesh.h"
 #include "shader.h"
 #include "renderscene.h"
 #include <QElapsedTimer>
