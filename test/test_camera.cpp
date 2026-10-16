@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include "camera.h"
-#include "renderscene.h"
+#include "scene.h"
 #include "tilenode.h"
 #include "renderframe.h"
 
@@ -61,7 +61,7 @@ TEST(Camera, ZUpPanStaysOnGroundAndKeyboardElevationUsesZ) {
 TEST(Camera, LoadingSceneRestoresFormatDefaultAxis) {
     Mesh tiled; tiled.tileRoot=std::make_shared<TileNode>();
     tiled.tileRoot->radius=1; tiled.bboxMin={-1,-1,-1}; tiled.bboxMax={1,1,1};
-    RenderScene scene; scene.setMesh(tiled);
+    Scene scene; scene.setMesh(tiled);
     auto& camera=scene.cameraController().camera();
     EXPECT_EQ(camera.upAxis(),UpAxis::Z);
     camera.setUpAxis(UpAxis::Y); scene.setMesh(tiled); EXPECT_EQ(camera.upAxis(),UpAxis::Z);

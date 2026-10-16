@@ -26,6 +26,8 @@ find_package(GTest CONFIG REQUIRED)
 
 add_executable(gl3d_test
     test_editcontroller.cpp
+    test_renderer.cpp
+    test_scene.cpp
     test_meshloader.cpp
     test_camera.cpp
     test_main.cpp

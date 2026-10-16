@@ -9,13 +9,33 @@ QMatrix4x4 EditTransform::matrix(const QVector3D& center) const {
 }
 void EditController::clearHistory() { m_undo.clear(); m_redo.clear(); }
 void EditController::selectState(int index) {
-    m_current=index>=0 && index<int(m_states.size())?m_states[size_t(index)]:EditTransform();
+    m_selected=index>=0 && index<int(m_states.size())?index:-1;
+    m_empty={};
     clearHistory();
 }
-void EditController::storeState(int index) {
-    if(index>=0 && index<int(m_states.size())) m_states[size_t(index)]=m_current;
+void EditController::resizeObjects(size_t count) {
+    m_states.resize(count);
+    m_owners.resize(count,-1);
 }
-void EditController::reset() { m_current={}; m_dragStart={}; m_states.clear(); m_tiles.clear(); clearHistory(); }
+void EditController::setOwner(int index,int owner) {
+    if(index>=0 && index<int(m_owners.size())) m_owners[size_t(index)]=owner;
+}
+EditTransform& EditController::state(int index) {
+    if(index<0 || index>=int(m_states.size())) return m_empty;
+    if(index<int(m_owners.size()) && m_owners[size_t(index)]>=0) return m_tiles[m_owners[size_t(index)]];
+    return m_states[size_t(index)];
+}
+const EditTransform& EditController::state(int index) const {
+    if(index<0 || index>=int(m_states.size())) return m_empty;
+    if(index<int(m_owners.size()) && m_owners[size_t(index)]>=0) {
+        const auto found=m_tiles.find(m_owners[size_t(index)]);
+        return found==m_tiles.end()?m_empty:found->second;
+    }
+    return m_states[size_t(index)];
+}
+void EditController::reset() {
+    m_selected=-1; m_empty={}; m_dragStart={}; m_states.clear(); m_owners.clear(); m_tiles.clear(); clearHistory();
+}
 bool EditController::changed(const EditTransform& a,const EditTransform& b,ChangePolicy policy) {
     if((a.position-b.position).length()>1e-5f) return true;
     // Preserve both existing backends' no-op thresholds, including quaternion signs.

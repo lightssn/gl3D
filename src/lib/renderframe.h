@@ -1,6 +1,6 @@
 #pragma once
 
-#include "renderscene.h"
+#include "scene.h"
 #include <QMatrix4x4>
 #include <QSize>
 #include <QVector4D>
@@ -28,7 +28,7 @@ inline QMatrix4x4 makeGizmoMatrix(const QMatrix4x4& view, const QMatrix4x4& proj
     return screen * rotation;
 }
 
-inline RenderFrame makeRenderFrame(const RenderScene& scene, const QSize& size)
+inline RenderFrame makeRenderFrame(const Scene& scene, const QSize& size)
 {
     RenderFrame frame;
     frame.view = scene.cameraController().camera().viewMatrix();

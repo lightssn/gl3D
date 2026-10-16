@@ -3,7 +3,7 @@
 #include <QMainWindow>
 
 class GLWindow;
-class RenderView;
+class Scene;
 class QLabel;
 class QPushButton;
 class QProgressBar;
@@ -29,7 +29,7 @@ class MainWindow : public QMainWindow {
     void setBackend(bool vulkan);
     void updateBackendUi();
     void clearScene();
-    RenderView* activeView() const;
+    Scene* activeView() const;
     GLWindow* m_glWindow = nullptr;
     QWidget* m_viewContainer = nullptr;
     QWidget* m_glContainer = nullptr;

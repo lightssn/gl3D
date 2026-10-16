@@ -16,14 +16,18 @@ struct GL3D_EXPORT EditTransform {
 // Shared editor state; window-specific ray/projection input stays in each view.
 class GL3D_EXPORT EditController {
 public:
+    int mode = 0;
     enum class ChangePolicy { ComponentTolerance, VectorTolerance };
-    EditTransform& current() { return m_current; }
-    const EditTransform& current() const { return m_current; }
+    EditTransform& current() { return state(m_selected); }
+    const EditTransform& current() const { return state(m_selected); }
     std::vector<EditTransform>& states() { return m_states; }
     void reset();
     void clearHistory();
     void selectState(int index);
-    void storeState(int index);
+    EditTransform& state(int index);
+    const EditTransform& state(int index) const;
+    void resizeObjects(size_t count);
+    void setOwner(int index, int owner);
     void beginDrag(const EditTransform& state) { m_dragStart=state; }
     const EditTransform& dragStart() const { return m_dragStart; }
     bool endDrag(int object,const EditTransform& state,ChangePolicy policy) { return commit(object,m_dragStart,state,policy); }
@@ -44,7 +48,9 @@ public:
 private:
     struct Command { int object; EditTransform before,after; };
     static bool changed(const EditTransform& before,const EditTransform& after,ChangePolicy policy);
-    EditTransform m_current;
+    int m_selected = -1;
+    EditTransform m_empty;
+    std::vector<int> m_owners;
     EditTransform m_dragStart;
     std::vector<EditTransform> m_states;
     std::map<int,EditTransform> m_tiles;

@@ -2,7 +2,7 @@
 #include "glwindow.h"
 #include "debugwindow.h"
 #include "meshloader.h"
-#include "renderview.h"
+#include "scene.h"
 
 #include <QToolBar>
 #include <QStatusBar>
@@ -179,13 +179,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         updateBackendUi();
         });
     connect(m_glWindow, &GLWindow::loadUnavailable, this, [this](const QString& message) {
-        m_modelOpen = m_glWindow->scene().hasMesh();
+        m_modelOpen = m_glWindow->hasMesh();
         m_modelInfo->setText(message);
         statusBar()->showMessage(message);
         updateBackendUi();
         });
     connect(m_glWindow, &GLWindow::loadFailed, this, [this](const QString& err) {
-        m_modelOpen = m_glWindow->scene().hasMesh();
+        m_modelOpen = m_glWindow->hasMesh();
         updateBackendUi();
         QMessageBox::warning(this, "加载失败", err);
         });
@@ -271,7 +271,7 @@ void MainWindow::openMeshes(const QStringList& paths) {
 MainWindow::~MainWindow() {
 #if defined(GL3D_HAS_VULKAN)
     if (m_vulkanContainer) {
-        m_debugWindow->setRenderView(m_glWindow);
+        m_debugWindow->setScene(m_glWindow);
         delete m_vulkanContainer;
         m_vulkanContainer = nullptr;
         m_vkWindow = nullptr;
@@ -280,7 +280,7 @@ MainWindow::~MainWindow() {
 #endif
 }
 
-RenderView* MainWindow::activeView() const {
+Scene* MainWindow::activeView() const {
 #if defined(GL3D_HAS_VULKAN)
     if (m_vulkanBackend && m_vkWindow) return m_vkWindow;
 #endif
@@ -335,7 +335,7 @@ void MainWindow::setBackend(bool vulkan) {
             updateBackendUi();
         });
         connect(m_vkWindow, &VKWindow::loadFailed, this, [this](const QString& error) {
-            m_modelOpen = m_vkWindow->scene().hasMesh();
+            m_modelOpen = m_vkWindow->hasMesh();
             updateBackendUi();
             QMessageBox::warning(this, "加载失败", error);
         });
@@ -364,9 +364,9 @@ void MainWindow::setBackend(bool vulkan) {
         m_vulkanContainer->setFocusPolicy(Qt::StrongFocus);
         m_viewLayout->addWidget(m_vulkanContainer, 1);
         m_vulkanBackend = true;
-        m_debugWindow->setRenderView(m_vkWindow);
+        m_debugWindow->setScene(m_vkWindow);
     } else {
-        m_debugWindow->setRenderView(m_glWindow);
+        m_debugWindow->setScene(m_glWindow);
         if (m_vulkanContainer) {
             delete m_vulkanContainer;
             m_vulkanContainer = nullptr;

@@ -80,12 +80,12 @@ TEST(Editor, DeselectAndSwitchObjectsRetainIndependentTransforms) {
     EditController edit; edit.states().resize(2); edit.selectState(0);
     edit.current().position={1,2,3}; edit.current().scale={2,3,4};
     edit.current().rotation=QQuaternion::fromAxisAndAngle({0,1,0},30);
-    const auto first=edit.current(); edit.storeState(0);
+    const auto first=edit.current();
     edit.commit(0,{},first,component);
     edit.selectState(-1);
     EXPECT_FALSE(edit.canUndo()); expectVector(edit.states()[0].position,first.position);
     edit.selectState(1); expectVector(edit.current().scale,{1,1,1});
-    edit.current().position={8,0,0}; edit.storeState(1);
+    edit.current().position={8,0,0};
     edit.selectState(0); expectVector(edit.current().position,first.position);
     expectVector(edit.current().scale,first.scale); EXPECT_EQ(edit.current().rotation,first.rotation);
     edit.selectState(1); expectVector(edit.current().position,{8,0,0});

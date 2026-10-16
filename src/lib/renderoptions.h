@@ -2,7 +2,9 @@
 
 // Backend-neutral rendering configuration shared by OpenGL and Vulkan.
 struct RenderOptions {
+    float clearColor[3] = {0.13f,0.13f,0.16f};
     bool antialiasing = true;
+    bool mipmaps = false;
     bool showGrid = true;
     bool showGizmo = true;
     bool showSelection = true;

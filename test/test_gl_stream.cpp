@@ -1,6 +1,6 @@
 #include "glcontext.h"
-#include "meshrenderer.h"
-#include "renderscene.h"
+#include "glrenderer.h"
+#include "scene.h"
 #include "shader.h"
 #include <QGuiApplication>
 #include <QOffscreenSurface>
@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
             SubMesh triangle;
             triangle.vertices={{-0.4f,-0.4f,0,1,0,0,0,0},{0.4f,-0.4f,0,1,0,0,0,0},{0,0.4f,0,1,0,0,0,0}};
             triangle.indices={0,1,2}; outlineMesh.subMeshes.push_back(std::move(triangle));
-            MeshRenderer outlineRenderer; outlineRenderer.upload(outlineMesh);
+            GLRenderer outlineRenderer; outlineRenderer.upload(outlineMesh);
             QOpenGLFramebufferObject outlineFbo(128,128); outlineFbo.bind();
             gl.glViewport(0,0,128,128); gl.glClearColor(0,0,0,1);
             modelShader.bind();
@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
             part.vertices.resize(40000,part.vertices[0]); part.indices={0,1,2};
             node->geometry.push_back(std::move(part)); mesh.tileRoot->children.push_back(node);
         }
-        RenderScene scene; scene.setMesh(std::move(mesh)); MeshRenderer renderer;
+        Scene scene; scene.setMesh(std::move(mesh)); GLRenderer renderer;
         for(int frame=0;frame<120;++frame) {
             scene.updateTiles({64,64}); renderer.syncTiles(scene);
             if(renderer.visibleDrawCount()==2) break;

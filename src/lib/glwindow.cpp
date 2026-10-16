@@ -1,7 +1,7 @@
 #include "glwindow.h"
 #include "glcontext.h"
 #include "shader.h"
-#include "meshrenderer.h"
+#include "glrenderer.h"
 #include "meshloader.h"
 #include "renderframe.h"
 
@@ -34,7 +34,7 @@ GLWindow::GLWindow(QWindow* parent) : QOpenGLWindow(QOpenGLWindow::NoPartialUpda
     m_renderTimer->setTimerType(Qt::PreciseTimer);
     m_renderTimer->setInterval(16); //约60 FPS，只触发按需重绘
     connect(m_renderTimer, &QTimer::timeout, this, [this] {
-        if(!m_scene.tiled() || m_scene.needsTileRedraw()) update();
+        if(!Scene::tiled() || Scene::needsTileRedraw()) update();
     });
     qRegisterMetaType<DebugSnapshot>("DebugSnapshot");
     m_idleFpsTimer=new QTimer(this);
@@ -82,7 +82,7 @@ void GLWindow::initializeGL() {
     gl.glDisable(GL_CULL_FACE); //叶片等薄片需双面可见
     gl.glEnable(GL_STENCIL_TEST); //选中描边依赖stencil
     gl.glEnable(GL_MULTISAMPLE);
-    gl.glClearColor(m_clearColor[0], m_clearColor[1], m_clearColor[2], 1.0f);
+    gl.glClearColor(options().clearColor[0], options().clearColor[1], options().clearColor[2], 1.0f);
     m_dpr = devicePixelRatioF();
     printf("[GLWindow] %s\n", (const char*)gl.glGetString(GL_RENDERER));
 
@@ -92,14 +92,15 @@ void GLWindow::initializeGL() {
     const QString shaderDir = QCoreApplication::applicationDirPath() + "/shaders/";
     m_shader->loadFromCombinedFile(shaderDir + "model.glsl");
     m_overlayShader->loadFromCombinedFile(shaderDir + "overlay.glsl");
-    m_renderer = std::make_unique<MeshRenderer>();
+    m_renderer = std::make_unique<GLRenderer>();
+    m_renderer->setMipmapsEnabled(Scene::options().mipmaps);
 
     buildAxesMesh();
     createPickTarget(std::max((int)(width() * m_dpr), 1), std::max((int)(height() * m_dpr), 1));
 
     //构造函数期间收到过加载请求 此时补传显存
-    if (!m_mesh.subMeshes.empty() && m_mesh.vertexCount() > 0) {
-        if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
+    if (!mesh().subMeshes.empty() && mesh().vertexCount() > 0) {
+        if(Scene::tiled()) m_renderer->clear(); else m_renderer->upload(mesh());
         refreshOverlays();
         }
     // The CLI may request a model before the window's first initialization.
@@ -123,14 +124,14 @@ void GLWindow::resizeGL(int w, int h) {
 void GLWindow::paintGL() {
     auto& gl = GLFunctions::instance();
     m_frameDrawCalls = 0;
-    m_depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
-    m_faceCulling ? gl.glEnable(GL_CULL_FACE) : gl.glDisable(GL_CULL_FACE);
+    options().depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
+    options().faceCulling ? gl.glEnable(GL_CULL_FACE) : gl.glDisable(GL_CULL_FACE);
     const qint64 frameElapsed = m_frameTimer.restart();
     if (frameElapsed > 0) {
         m_frameTimesMs.push_back((float)frameElapsed);
         if (m_frameTimesMs.size() > 240) m_frameTimesMs.erase(m_frameTimesMs.begin());
     }
-    gl.glClearColor(m_clearColor[0], m_clearColor[1], m_clearColor[2], 1.0f);
+    gl.glClearColor(options().clearColor[0], options().clearColor[1], options().clearColor[2], 1.0f);
     gl.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
     //FPS统计 每秒发一次
@@ -142,21 +143,21 @@ void GLWindow::paintGL() {
         m_fpsTimer.restart();
         }
 
-    if(m_scene.tiled() && m_renderer) {
-        m_scene.updateTiles(QSize(m_fbW,m_fbH));
-        m_renderer->syncTiles(m_scene);
+    if(Scene::tiled() && m_renderer) {
+        Scene::updateTiles(QSize(m_fbW,m_fbH));
+        m_renderer->syncTiles(*this);
         syncTileBounds();
         // 任务完成与过期回收必须继续推进，固定帧率模式由定时器驱动。
-        if(!m_fixedFps && m_scene.needsTileRedraw()) update();
+        if(!options().fixedFps && Scene::needsTileRedraw()) update();
     }
     if (!m_shader || !m_shader->isValid() || !hasMesh()) { m_lastDrawCalls = 0; m_idleFpsTimer->start(1000); return; }
     if(m_gizmoDirty) { rebuildGizmo(); m_gizmoDirty=false; }
 
-    const RenderFrame frame = makeRenderFrame(m_scene, QSize(width(), height()));
+    const RenderFrame frame = makeRenderFrame(*this, QSize(width(), height()));
     const QMatrix4x4& view = frame.view;
     const QMatrix4x4& proj = frame.projection;
 
-    if (m_showGrid) drawGrid(proj, view); //背景网格 先画被模型遮挡
+    if (options().showGrid) drawGrid(proj, view); //背景网格 先画被模型遮挡
 
     //主模型 Blinn-Phong头灯
     m_shader->bind();
@@ -165,19 +166,19 @@ void GLWindow::paintGL() {
     m_shader->setVec3("uViewport", float(m_fbW), float(m_fbH), 0.0f);
     m_shader->setFloat("uOutline", 0.0f);
     m_shader->setInt("uFlatColor", 0);
-    m_shader->setInt("uDebugView", m_debugView);
-    m_shader->setInt("uPbr", m_pbr ? 1 : 0);
-    m_shader->setInt("uEnableNormalMap", m_normalMap ? 1 : 0);
-    m_shader->setInt("uNormalLighting", m_renderOptions.normalLighting ? 1 : 0);
+    m_shader->setInt("uDebugView", options().debugView);
+    m_shader->setInt("uPbr", options().pbr ? 1 : 0);
+    m_shader->setInt("uEnableNormalMap", options().normalMap ? 1 : 0);
+    m_shader->setInt("uNormalLighting", options().normalLighting ? 1 : 0);
     m_shader->setVec4("uFlatColorValue", 1, 1, 1, 1);
     m_renderer->render(*m_shader);
     m_frameDrawCalls += m_renderer->visibleDrawCount();
 
     //线框模式 复用已上传VAO 单片状态切换追加三角边 无CPU几何开销
     //深度LEQUAL保证边与已被填充的前表面同深度通过 只描可见三角
-    if (m_wireframe) {
+    if (options().wireframe) {
         //根据背景亮暗选线框颜色
-        float lum = (m_clearColor[0] + m_clearColor[1] + m_clearColor[2]) / 3.0f;
+        float lum = (options().clearColor[0] + options().clearColor[1] + options().clearColor[2]) / 3.0f;
         QVector3D wc = lum > 0.5f ? QVector3D(0.30f, 0.30f, 0.34f) : QVector3D(0.74f, 0.74f, 0.78f);
         m_shader->setFloat("uOutline", 0.0f);
         m_shader->setInt("uFlatColor", 1); //纯色模式
@@ -191,19 +192,19 @@ void GLWindow::paintGL() {
         gl.glDepthFunc(GL_LESS); //防闪烁
         }
 
-    if (m_selectedSubMesh >= 0 && m_showSelection) {
+    if (selection().indexRef() >= 0 && options().showSelection) {
         drawSelection(proj, view); //红边+粉色蒙版
         m_frameDrawCalls += m_renderer->drawUnitCount() * 3;
     }
     m_shader->unbind();
 
-    if(m_renderOptions.showTileBounds && m_scene.tiled())
+    if(options().showTileBounds && Scene::tiled())
         drawOverlay(m_tileBoundsMesh,proj*view,true,QVector3D());
     //操作器与坐标轴HUD 顶层显示 关深度测试
     gl.glDisable(GL_DEPTH_TEST);
-    if (m_transformMode != None && m_showGizmo) drawGizmo(proj, view);
-    if (m_showAxes) drawAxesHud(view);
-    m_depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
+    if (editor().mode != None && options().showGizmo) drawGizmo(proj, view);
+    if (options().showAxes) drawAxesHud(view);
+    options().depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
     m_lastDrawCalls = m_frameDrawCalls;
     m_idleFpsTimer->start(1000);
     if (m_frameCount % 8 == 0) emit debugUpdated(collectDebugSnapshot());
@@ -235,7 +236,7 @@ DebugSnapshot GLWindow::collectDebugSnapshot() {
     DebugSnapshot s;
     s.fps = m_lastFps;
     s.drawCalls = m_lastDrawCalls;
-    s.triangles = m_mesh.triangleCount();
+    s.triangles = mesh().triangleCount();
     s.frameTimesMs.reserve(static_cast<qsizetype>(m_frameTimesMs.size()));
     for (float frameTime : m_frameTimesMs)
         s.frameTimesMs.append(frameTime);
@@ -253,9 +254,9 @@ DebugSnapshot GLWindow::collectDebugSnapshot() {
         const float slowAverage = slowSum / slowCount;
         s.onePercentLowFps = slowAverage > 0.0f ? 1000.0f / slowAverage : 0.0f;
     }
-    s.fov = m_camera.fov(); s.distance = m_camera.distance();
-    s.eye = m_camera.eye(); s.target = m_camera.target(); s.ortho = m_camera.ortho();
-    s.antialiasing = m_antialiasing; s.modelLoaded = hasMesh();
+    s.fov = cameraController().camera().fov(); s.distance = cameraController().camera().distance();
+    s.eye = cameraController().camera().eye(); s.target = cameraController().camera().target(); s.ortho = cameraController().camera().ortho();
+    s.antialiasing = options().antialiasing; s.modelLoaded = hasMesh();
     if (!isValid() || !m_renderer) return s;
     auto& gl = GLFunctions::instance();
     const auto* renderer = gl.glGetString(GL_RENDERER);
@@ -278,7 +279,7 @@ DebugSnapshot GLWindow::collectDebugSnapshot() {
     if (m_pickDepth) { gl.glBindRenderbuffer(GL_RENDERBUFFER, m_pickDepth); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &rw); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &rh); gl.glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &rfmt); }
     const qint64 depthBytes = (qint64)rw * rh * (rfmt == GL_DEPTH_COMPONENT16 ? 2 : 4);
     qint64 cpuVboBytes = 0, cpuEboBytes = 0;
-    for (const auto& subMesh : m_mesh.subMeshes) {
+    for (const auto& subMesh : mesh().subMeshes) {
         cpuVboBytes += static_cast<qint64>(subMesh.vertices.size() * sizeof(Vertex));
         cpuEboBytes += static_cast<qint64>(subMesh.indices.size() * sizeof(unsigned int));
     }
@@ -298,11 +299,11 @@ DebugSnapshot GLWindow::debugSnapshot() {
 //XY平面(z=0)网格 平行X与平行Y两组线 坐标轴加亮
 void GLWindow::rebuildGrid() {
     if (!m_overlayShader || !m_overlayShader->isValid()) return;
-    float radius = m_mesh.radius();
+    float radius = mesh().radius();
     if (radius <= 0.0f) { releaseOverlay(m_gridMesh); return; }
     std::vector<OverlayVertex> verts;
     //网格色随主题: 深底用亮灰 浅底用深灰
-    float lum = (m_clearColor[0] + m_clearColor[1] + m_clearColor[2]) / 3.0f;
+    float lum = (options().clearColor[0] + options().clearColor[1] + options().clearColor[2]) / 3.0f;
     QVector3D base = lum > 0.5f ? QVector3D(0.45f, 0.45f, 0.5f) : QVector3D(0.32f, 0.32f, 0.38f);
     QVector3D strong = base * 1.7f;
     float ext = radius * 1.5f;
@@ -311,11 +312,11 @@ void GLWindow::rebuildGrid() {
     float step = 2.0f * ext / lines;
     for (int i = 0; i <= lines; ++i) {
         float p = -ext + i * step;
-        pushLine(verts, m_camera.groundPoint(-ext, p, eps), m_camera.groundPoint(ext, p, eps), base);
-        pushLine(verts, m_camera.groundPoint(p, -ext, eps), m_camera.groundPoint(p, ext, eps), base);
+        pushLine(verts, cameraController().camera().groundPoint(-ext, p, eps), cameraController().camera().groundPoint(ext, p, eps), base);
+        pushLine(verts, cameraController().camera().groundPoint(p, -ext, eps), cameraController().camera().groundPoint(p, ext, eps), base);
         }
-    pushLine(verts, m_camera.groundPoint(-ext, 0, eps), m_camera.groundPoint(ext, 0, eps), strong);
-    pushLine(verts, m_camera.groundPoint(0, -ext, eps), m_camera.groundPoint(0, ext, eps), strong);
+    pushLine(verts, cameraController().camera().groundPoint(-ext, 0, eps), cameraController().camera().groundPoint(ext, 0, eps), strong);
+    pushLine(verts, cameraController().camera().groundPoint(0, -ext, eps), cameraController().camera().groundPoint(0, ext, eps), strong);
     uploadOverlay(m_gridMesh, verts);
     }
 
@@ -336,21 +337,21 @@ void GLWindow::rebuildGizmo() {
     const float s = 1.0f; // 单位操作器，绘制时换算成固定屏幕大小。
     QVector3D red(0.95f, 0.25f, 0.25f), green(0.25f, 0.95f, 0.25f), blue(0.3f, 0.5f, 1.0f);
     QVector3D x(1, 0, 0), y(0, 1, 0), z(0, 0, 1);
-    if (m_transformMode == Translate) {
+    if (editor().mode == Translate) {
         pushAxisArrow(verts, x, s, red);
         pushAxisArrow(verts, y, s, green);
         pushAxisArrow(verts, z, s, blue);
         }
-    else if (m_transformMode == Rotate) {
+    else if (editor().mode == Rotate) {
         pushCircle(verts, QVector3D(), x, s, red); //绕X旋转 圆在YZ平面
         pushCircle(verts, QVector3D(), y, s, green);
         pushCircle(verts, QVector3D(), z, s, blue);
         }
-    else if (m_transformMode == Scale) {
+    else if (editor().mode == Scale) {
         //缩放箭头随模型旋转 对齐模型本地坐标轴
-        QVector3D rx = m_transformRot.rotatedVector(x);
-        QVector3D ry = m_transformRot.rotatedVector(y);
-        QVector3D rz = m_transformRot.rotatedVector(z);
+        QVector3D rx = editor().current().rotation.rotatedVector(x);
+        QVector3D ry = editor().current().rotation.rotatedVector(y);
+        QVector3D rz = editor().current().rotation.rotatedVector(z);
         pushAxisArrow(verts, rx, s, red);
         pushAxisArrow(verts, ry, s, green);
         pushAxisArrow(verts, rz, s, blue);
@@ -363,17 +364,17 @@ void GLWindow::rebuildGizmo() {
 
 void GLWindow::refreshOverlays() {
     rebuildGrid();
-    if (m_transformMode != None) rebuildGizmo();
+    if (editor().mode != None) rebuildGizmo();
     }
 
 void GLWindow::syncTileBounds() {
-    if(m_tileBoundsRevision==m_scene.tileBoundsRevision()) return;
+    if(m_tileBoundsRevision==Scene::tileBoundsRevision()) return;
     std::vector<OverlayVertex> vertices;
-    const auto& lines=m_scene.tileBoundsLines();
+    const auto& lines=Scene::tileBoundsLines();
     const QVector3D color(1.0f,0.7f,0.12f);
     for(size_t i=0;i+1<lines.size();i+=2) pushLine(vertices,lines[i],lines[i+1],color);
     uploadOverlay(m_tileBoundsMesh,vertices);
-    m_tileBoundsRevision=m_scene.tileBoundsRevision();
+    m_tileBoundsRevision=Scene::tileBoundsRevision();
 }
 
 //网格/坐标轴/操作器几何统一上传 交错pos3+color3
@@ -440,17 +441,17 @@ void GLWindow::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     gl.glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     gl.glDepthFunc(GL_LEQUAL);
     m_shader->setFloat("uOutline", 0.0f);
-    m_renderer->render(*m_shader, m_selectedSubMesh);
+    m_renderer->render(*m_shader, selection().indexRef());
     gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     //2 按投影法线外扩指定像素画红边，只画stencil未覆盖的外缘。
     //保留原顶点深度，前方已有的模型继续遮挡红边。
-    m_shader->setFloat("uOutline", m_outlineWidth);
+    m_shader->setFloat("uOutline", options().outlineWidth);
     m_shader->setVec4("uFlatColorValue", 0.9f, 0.1f, 0.1f, 1.0f);
     gl.glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
     gl.glStencilMask(0x00);
     gl.glDepthFunc(GL_LEQUAL);
-    m_renderer->render(*m_shader, m_selectedSubMesh);
+    m_renderer->render(*m_shader, selection().indexRef());
     gl.glStencilMask(0xFF);
     gl.glDisable(GL_STENCIL_TEST);
 
@@ -461,15 +462,15 @@ void GLWindow::drawSelection(const QMatrix4x4& proj, const QMatrix4x4& view) {
     m_shader->setVec4("uFlatColorValue", 1.0f, 0.76f, 0.82f, 0.35f);
     gl.glDepthMask(GL_FALSE);
     gl.glDepthFunc(GL_LEQUAL);
-    m_renderer->render(*m_shader, m_selectedSubMesh);
+    m_renderer->render(*m_shader, selection().indexRef());
     gl.glDepthFunc(GL_LESS);
     gl.glDepthMask(GL_TRUE);
     gl.glDisable(GL_BLEND);
     }
 
 void GLWindow::drawGizmo(const QMatrix4x4& proj, const QMatrix4x4& view) {
-    const QVector3D center = m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center();
-    const QMatrix4x4 mvp = makeGizmoMatrix(view, proj, center + m_transformPos, size());
+    const QVector3D center = selection().indexRef() >= 0 ? selection().centers()[static_cast<size_t>(selection().indexRef())] : mesh().center();
+    const QMatrix4x4 mvp = makeGizmoMatrix(view, proj, center + editor().current().position, size());
     drawOverlay(m_gizmoMesh, mvp, true, QVector3D());
     }
 
@@ -535,8 +536,8 @@ void GLWindow::pickAt(const QPoint& pos) {
         gl.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         m_shader->bind();
-        m_shader->setMat4("uView", m_camera.viewMatrix().constData());
-        QMatrix4x4 proj = m_camera.projMatrix(m_pickH ? (float)m_pickW / m_pickH : 1.0f);
+        m_shader->setMat4("uView", cameraController().camera().viewMatrix().constData());
+        QMatrix4x4 proj = cameraController().camera().projMatrix(m_pickH ? (float)m_pickW / m_pickH : 1.0f);
         m_shader->setMat4("uProj", proj.constData());
         m_shader->setFloat("uOutline", 0.0f);
         m_shader->setInt("uFlatColor", 1);
@@ -544,8 +545,8 @@ void GLWindow::pickAt(const QPoint& pos) {
         std::set<int> pickedOwners;
         for (int i = 0; i < subMeshCount(); ++i) {
             if (!m_renderer->subMeshVisible(i)) continue;
-            if (m_scene.tiled() && !pickedOwners.insert(m_mesh.subMeshes[size_t(i)].tileOwner).second) continue;
-            const int representative=m_scene.tileRepresentative(i);
+            if (Scene::tiled() && !pickedOwners.insert(mesh().subMeshes[size_t(i)].tileOwner).second) continue;
+            const int representative=Scene::tileRepresentative(i);
             const int id = representative + 1;
             m_shader->setVec4("uFlatColorValue", (id & 255) / 255.0f,
                               ((id >> 8) & 255) / 255.0f,
@@ -565,13 +566,10 @@ void GLWindow::pickAt(const QPoint& pos) {
         gl.glViewport(0, 0, m_fbW, m_fbH);
         }
     doneCurrent();
-    if (!hit && m_selectedSubMesh >= 0) selectSubMesh(-1);
+    if (!hit && selection().indexRef() >= 0) selectSubMesh(-1);
     update();
     }
 
-bool GLWindow::hasMesh() const {
-    return m_scene.tiled() || (m_renderer && !m_renderer->empty());
-    }
 
 bool GLWindow::loadMeshAsync(const QStringList& paths) {
     if (m_loading) return false; //加载进行中 忽略重复请求
@@ -602,9 +600,9 @@ bool GLWindow::loadMeshAsync(const QStringList& paths) {
     }
 
 //后台解析完成回调(主线程) 成功则上传显存+取景+发modelLoaded 失败发loadFailed
-void GLWindow::onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> mesh) {
+void GLWindow::onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> loadedMesh) {
     m_loading = false;
-    if (!ok || !mesh) {
+    if (!ok || !loadedMesh) {
         emit loadFailed(err.isEmpty() ? "加载失败" : err);
         emit loadFinished();
         update();
@@ -615,54 +613,30 @@ void GLWindow::onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh>
         emit loadFinished();
         return;
         }
-    m_scene.setMesh(std::move(*mesh), m_currentPath);
-    m_edit.reset();
-    if(!m_scene.tiled()) m_edit.states().resize(m_mesh.subMeshes.size());
-    if(m_scene.tiled()) { m_pbr=false; m_normalMap=false; }
+    Scene::setMesh(std::move(*loadedMesh), m_currentPath);
+    m_tileBoundsRevision=~uint64_t(0);
+    if(Scene::tiled()) { options().pbr=false; options().normalMap=false; }
     makeCurrent();
-    if(m_scene.tiled()) m_renderer->clear(); else m_renderer->upload(m_mesh);
+    if(Scene::tiled()) m_renderer->clear(); else m_renderer->upload(mesh());
     refreshOverlays();
     doneCurrent();
-    m_camera.fitToSphere(m_mesh.center(), m_mesh.radius());
-    m_outlineWidth = RenderOptions{}.outlineWidth;
-    m_transformPos = QVector3D();
-    m_transformRot = QQuaternion();
-    m_transformScale = QVector3D(1, 1, 1);
+    cameraController().camera().fitToSphere(mesh().center(), mesh().radius());
+    options().outlineWidth = RenderOptions{}.outlineWidth;
     m_dragAxis = 0;
     emit historyChanged(false, false);
     updateMeshMatrix();
-    m_selectedSubMesh = -1;
+    selection().indexRef() = -1;
     emit selectionChanged(false); //新模型默认未选中 操作器按钮隐藏
 
     QString info = QString("%1  顶点%2  三角%3  子网格%4")
                    .arg(QFileInfo(m_currentPath).fileName())
-                   .arg(m_mesh.vertexCount())
-                   .arg(m_mesh.triangleCount())
-                   .arg((int)m_mesh.subMeshes.size());
+                   .arg(mesh().vertexCount())
+                   .arg(mesh().triangleCount())
+                   .arg((int)mesh().subMeshes.size());
     emit meshLoaded(info);
     // GPU 资源已经上传，CPU 侧只保留材质、纹理、包围盒和统计信息。
-    if(!m_scene.tiled()) m_mesh.releaseGeometry();
+    if(!Scene::tiled()) mesh().releaseGeometry();
     emit loadFinished();
-    update();
-    }
-
-void GLWindow::resetView() {
-    if (!m_mesh.subMeshes.empty())
-        m_camera.fitToSphere(m_mesh.center(), m_mesh.radius());
-    update();
-    }
-
-void GLWindow::setClearColor(float r, float g, float b) {
-    //仅记录颜色 initializeGL时生效 context未创建前不可触碰GL
-    m_clearColor[0] = r;
-    m_clearColor[1] = g;
-    m_clearColor[2] = b;
-    if (!isValid() || !m_renderer) return;
-    makeCurrent();
-    auto& gl = GLFunctions::instance();
-    gl.glClearColor(r, g, b, 1.0f);
-    if (hasMesh()) rebuildGrid(); //网格色随主题刷新
-    doneCurrent();
     update();
     }
 
@@ -678,172 +652,41 @@ void GLWindow::deleteMesh() {
         releaseOverlay(m_tileBoundsMesh);
         doneCurrent();
     }
-    m_scene.clear();
-    m_edit.reset();
+    Scene::clear();
+    m_tileBoundsRevision=~uint64_t(0);
     m_idleFpsTimer->stop();
-    m_transformPos = QVector3D();
-    m_transformRot = QQuaternion();
-    m_transformScale = QVector3D(1, 1, 1);
     m_dragAxis = 0;
-    m_transformMode = None;
+    editor().mode = None;
     emit historyChanged(false, false);
-    m_selectedSubMesh = -1;
+    selection().indexRef() = -1;
     emit selectionChanged(false); //联动隐藏操作器
     emit meshCleared();
     update();
     }
 
-void GLWindow::setOrtho(bool on) {
-    m_camera.setOrtho(on); //投影矩阵在paintGL按此标志生成
-    update();
-    }
-
-void GLWindow::setTransformMode(int mode) {
-    m_transformMode = static_cast<TransformMode>(mode);
-    m_dragAxis = 0; //切换模式放弃进行中的拖拽
-    //工具按钮点击在事件回调中 非绘制期 GL上下文不当前 须makeCurrent再重建手柄
-    if (hasMesh() && m_overlayShader && m_overlayShader->isValid() && isValid()) {
-        makeCurrent();
-        rebuildGizmo();
-        doneCurrent();
-        }
-    update();
-    }
-
-void GLWindow::setWireframe(bool on) {
-    m_wireframe = on;
-    update();
-    }
-
-void GLWindow::setTileBounds(bool enabled) {
-    m_renderOptions.showTileBounds=enabled;
-    update();
-}
-
-void GLWindow::setOutlineWidth(float width) {
-    m_outlineWidth = std::max(0.0f, width);
-    update();
-    }
-
-int GLWindow::subMeshCount() const {
-    return static_cast<int>(m_mesh.subMeshes.size());
-    }
-
-QString GLWindow::subMeshName(int index) const {
-    if (index < 0 || index >= subMeshCount()) return QString();
-    const std::string& name = m_mesh.subMeshes[static_cast<size_t>(index)].materialName;
-    return name.empty() ? QStringLiteral("(默认材质)") : QString::fromStdString(name);
-    }
-
-bool GLWindow::subMeshVisible(int index) const {
-    return m_scene.tiled()?m_scene.tileVisible(index):(m_renderer && m_renderer->subMeshVisible(index));
-    }
-
-void GLWindow::setSubMeshVisible(int index, bool visible) {
-    if (!m_renderer) return;
-    if(m_scene.tiled()) m_scene.setTileVisible(index,visible);
-    else m_renderer->setSubMeshVisible(index, visible);
-    update();
-    }
-
-void GLWindow::selectSubMesh(int index) {
-    if (index < -1 || index >= subMeshCount()) return;
-    if (m_scene.tiled() && index >= 0 && !m_scene.mesh().subMeshes[size_t(index)].resident) return;
-    if (index == m_selectedSubMesh) {
-        emit subMeshSelected(index);
-        return;
-    }
-    m_selectedSubMesh = index;
-    m_transformPos = QVector3D();
-    m_transformRot = QQuaternion();
-    m_transformScale = QVector3D(1, 1, 1);
-    m_edit.clearHistory();
-    if(m_scene.tiled() && index>=0) {
-        const int owner=m_mesh.subMeshes[size_t(index)].tileOwner;
-        m_edit.current()=m_edit.tileState(owner);
-    }
-    if(!m_scene.tiled()) m_edit.selectState(index);
-    m_gizmoDirty=true;
-    updateMeshMatrix();
-    emit historyChanged(false, false);
-    emit selectionChanged(m_selectedSubMesh >= 0);
-    emit subMeshSelected(m_selectedSubMesh);
-    update();
-    }
-
-void GLWindow::setAntialiasing(bool on) {
-    m_antialiasing = on;
-    if (isValid() && m_renderer) { makeCurrent(); on ? GLFunctions::instance().glEnable(GL_MULTISAMPLE) : GLFunctions::instance().glDisable(GL_MULTISAMPLE); doneCurrent(); }
-    update();
-    }
-
-void GLWindow::setMipmaps(bool on) {
-    if (isValid() && m_renderer) {
-        makeCurrent();
-        m_renderer->setMipmapsEnabled(on);
-        doneCurrent();
-    }
-    update();
-}
-
-void GLWindow::setShowGrid(bool on) { m_showGrid = on; update(); }
-void GLWindow::setShowGizmo(bool on) { m_showGizmo = on; update(); }
-void GLWindow::setShowSelection(bool on) { m_showSelection = on; update(); }
-void GLWindow::setShowAxes(bool on) { m_showAxes = on; update(); }
-void GLWindow::setDepthTest(bool on) { m_depthTest = on; update(); }
-void GLWindow::setFaceCulling(bool on) { m_faceCulling = on; update(); }
-void GLWindow::setPbr(bool on) { m_pbr = on && supportsPbr(); update(); }
-void GLWindow::setNormalMap(bool on) { m_normalMap = on && supportsNormalMap(); update(); }
-void GLWindow::setFixedFpsEnabled(bool on) {
-    m_fixedFps = on;
-    if (m_renderTimer) {
-        if (on) {
-            const int interval = m_targetFps > 0 ? std::max(1, 1000 / m_targetFps) : 0;
-            m_renderTimer->start(interval);
-        }
-        else m_renderTimer->stop();
-    }
-    update();
-}
-void GLWindow::setTargetFps(int fps) {
-    m_targetFps = std::max(0, fps);
-    if (m_fixedFps && m_renderTimer) {
-        const int interval = m_targetFps > 0 ? std::max(1, 1000 / m_targetFps) : 0;
-        m_renderTimer->start(interval);
-    }
-}
-void GLWindow::setUpAxis(UpAxis axis) {
-    if (m_camera.upAxis() == axis) return;
-    m_camera.setUpAxis(axis);
-    if (isValid() && m_renderer) { makeCurrent(); rebuildGrid(); doneCurrent(); }
-    update();
-}
-
-void GLWindow::setDebugView(int mode) { m_debugView = std::clamp(mode, 0, 2); update(); }
-
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移
 void GLWindow::updateMeshMatrix() {
-    QVector3D c = m_selectedSubMesh >= 0 && m_selectedSubMesh < static_cast<int>(m_subMeshCenters.size())
-        ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center();
-    m_modelMatrix = currentTransform().matrix(c);
-    if(m_scene.tiled()) {
-        if(m_selectedSubMesh>=0) {
-            m_scene.setTileTransform(m_selectedSubMesh,m_modelMatrix);
-            m_edit.setTileState(m_mesh.subMeshes[size_t(m_selectedSubMesh)].tileOwner,currentTransform());
-        }
-        return;
-    }
-    // Selection only controls the gizmo; every submesh retains its own edit.
-    if(m_selectedSubMesh>=0) {
-        m_edit.storeState(m_selectedSubMesh);
-        if(m_renderer) m_renderer->setSubMeshTransform(m_selectedSubMesh,m_modelMatrix);
-    }
-    }
+    Scene::applyTransform(selection().indexRef());
+    transformsChanged();
+}
+
+void GLWindow::transformsChanged() {
+    m_gizmoDirty=true;
+    if(m_renderer && !Scene::tiled() && selection().indexRef()>=0)
+        m_renderer->setSubMeshTransform(selection().indexRef(),Scene::objectTransform(selection().indexRef()));
+}
+
+void GLWindow::visibilityChanged(int index,bool visible) {
+    if(m_renderer && !Scene::tiled()) m_renderer->setSubMeshVisible(index,visible);
+}
+void GLWindow::overlaysChanged() {
+    if(isValid() && m_renderer) { makeCurrent(); rebuildGrid(); doneCurrent(); }
+}
 
 //由屏幕坐标生成拾取射线 正交时视口平移 透视时从眼位出发
 void GLWindow::pickingRay(const QPoint& pos, QVector3D& origin, QVector3D& dir) {
-    QMatrix4x4 inv = m_camera.viewMatrix().inverted();
-    QVector3D eye = m_camera.eye();
+    QMatrix4x4 inv = cameraController().camera().viewMatrix().inverted();
+    QVector3D eye = cameraController().camera().eye();
     QVector3D right(inv(0, 0), inv(1, 0), inv(2, 0));
     QVector3D up(inv(0, 1), inv(1, 1), inv(2, 1));
     QVector3D back(inv(0, 2), inv(1, 2), inv(2, 2));
@@ -852,8 +695,8 @@ void GLWindow::pickingRay(const QPoint& pos, QVector3D& origin, QVector3D& dir) 
     float sx = 2.0f * pos.x() / w - 1.0f;
     float sy = 1.0f - 2.0f * pos.y() / h;
     float aspect = w / h;
-    if (m_camera.ortho()) {
-        float halfH = m_camera.distance() * 0.5f;
+    if (cameraController().camera().ortho()) {
+        float halfH = cameraController().camera().distance() * 0.5f;
         float halfW = halfH * aspect;
         origin = eye + right * (sx * halfW) + up * (sy * halfH);
         dir = fwd;
@@ -916,9 +759,9 @@ float GLWindow::gizmoAngle(const QPoint& pos, int axis) {
 
 //命中测试 逐轴将手柄投影到屏幕 取像素距离最近且小于阈值的轴
 int GLWindow::gizmoHitAxis(const QPoint& pos) {
-    if (m_transformMode == None || !hasMesh() || !m_showGizmo) return 0;
-    const QVector3D center = (m_selectedSubMesh >= 0 ? m_subMeshCenters[size_t(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
-    const auto frame = makeRenderFrame(m_scene, size());
+    if (editor().mode == None || !hasMesh() || !options().showGizmo) return 0;
+    const QVector3D center = (selection().indexRef() >= 0 ? selection().centers()[size_t(selection().indexRef())] : mesh().center()) + editor().current().position;
+    const auto frame = makeRenderFrame(*this, size());
     const QMatrix4x4 matrix = makeGizmoMatrix(frame.view, frame.projection, center, size());
     const QMatrix4x4 identity;
     auto project = [&](const QVector3D& point) { return projectToScreen(matrix, identity, point); };
@@ -936,7 +779,7 @@ int GLWindow::gizmoHitAxis(const QPoint& pos) {
     };
     for(int i=1;i<=3;++i) {
         const QVector3D axis = gizmoAxisDir(i);
-        if(m_transformMode != Rotate) { checkSegment({},axis,i); continue; }
+        if(editor().mode != Rotate) { checkSegment({},axis,i); continue; }
         const QVector3D seed = std::fabs(axis.y()) > 0.99f ? QVector3D(1,0,0) : QVector3D(0,1,0);
         const QVector3D tangent = QVector3D::crossProduct(axis,seed).normalized();
         const QVector3D bitangent = QVector3D::crossProduct(axis,tangent);
@@ -950,9 +793,9 @@ int GLWindow::gizmoHitAxis(const QPoint& pos) {
 
 //按下手柄 初始化该模式拖拽参数
 void GLWindow::beginGizmoDrag(const QPoint& pos, int axis) {
-    m_edit.beginDrag(currentTransform()); //撤销历史起点
-    m_dragCenter = (m_selectedSubMesh >= 0 ? m_subMeshCenters[static_cast<size_t>(m_selectedSubMesh)] : m_mesh.center()) + m_transformPos;
-    if (m_transformMode == Rotate) {
+    beginEdit(); //撤销历史起点
+    m_dragCenter = (selection().indexRef() >= 0 ? selection().centers()[static_cast<size_t>(selection().indexRef())] : mesh().center()) + editor().current().position;
+    if (editor().mode == Rotate) {
         m_prevDragParam = gizmoAngle(pos, axis);
         return;
         }
@@ -960,80 +803,50 @@ void GLWindow::beginGizmoDrag(const QPoint& pos, int axis) {
     pickingRay(pos, origin, dir);
     QVector3D a = gizmoAxisDir(axis);
     if (!rayLineParam(origin, dir, m_dragCenter, a, m_prevDragParam)) m_prevDragParam = 0.0f;
-    if (m_transformMode == Scale) {
-        if (axis == 1) m_dragInitScale = m_transformScale.x();
-        else if (axis == 2) m_dragInitScale = m_transformScale.y();
-        else m_dragInitScale = m_transformScale.z();
+    if (editor().mode == Scale) {
+        if (axis == 1) m_dragInitScale = editor().current().scale.x();
+        else if (axis == 2) m_dragInitScale = editor().current().scale.y();
+        else m_dragInitScale = editor().current().scale.z();
         }
     }
 
 //移动变换模型 平移=沿轴增量 旋转=极角增量 缩放=沿轴距离比例
 void GLWindow::dragGizmo(const QPoint& pos) {
-    if (m_dragAxis <= 0 || m_transformMode == None) return;
+    if (m_dragAxis <= 0 || editor().mode == None) return;
     QVector3D axis = gizmoAxisDir(m_dragAxis);
-    if (m_transformMode == Translate) {
+    if (editor().mode == Translate) {
         QVector3D origin, dir;
         pickingRay(pos, origin, dir);
         float param = 0;
         if (!rayLineParam(origin, dir, m_dragCenter, axis, param)) return;
-        EditController::translate(m_edit.current(),axis,param-m_prevDragParam);
+        EditController::translate(editor().current(),axis,param-m_prevDragParam);
         m_prevDragParam = param;
         }
-    else if (m_transformMode == Rotate) {
+    else if (editor().mode == Rotate) {
         float ang = gizmoAngle(pos, m_dragAxis);
         const float delta = EditController::angleDelta(ang,m_prevDragParam);
         m_prevDragParam = ang;
-        m_transformRot = EditController::rotate(m_transformRot,axis,delta*180.0f/kPi);
+        editor().current().rotation = EditController::rotate(editor().current().rotation,axis,delta*180.0f/kPi);
         }
-    else if (m_transformMode == Scale) {
+    else if (editor().mode == Scale) {
         QVector3D origin, dir;
         pickingRay(pos, origin, dir);
         float param = 0;
         if (!rayLineParam(origin, dir, m_dragCenter, axis, param)) return;
         if (std::fabs(m_prevDragParam) < 1e-4f) return;
         const float v = EditController::rayScale(m_dragInitScale,param,m_prevDragParam);
-        if (m_dragAxis == 1) m_transformScale.setX(v);
-        else if (m_dragAxis == 2) m_transformScale.setY(v);
-        else m_transformScale.setZ(v);
+        if (m_dragAxis == 1) editor().current().scale.setX(v);
+        else if (m_dragAxis == 2) editor().current().scale.setY(v);
+        else editor().current().scale.setZ(v);
         }
     updateMeshMatrix();
-    if (!m_fixedFps) update();
+    if (!options().fixedFps) update();
     }
 
 //轴方向 缩放模式随模型旋转对齐本地轴 平移/旋转保持世界轴向
 QVector3D GLWindow::gizmoAxisDir(int idx) const {
-    return EditController::gizmoAxis(idx,m_transformMode==Scale,m_transformRot);
+    return EditController::gizmoAxis(idx,editor().mode==Scale,editor().current().rotation);
     }
-
-GLWindow::TransformState GLWindow::currentTransform() const {
-    return m_edit.current();
-    }
-
-// Apply shared history state and refresh the window-owned overlays.
-void GLWindow::applyTransform(const TransformState& s) {
-    m_edit.current() = s;
-    updateMeshMatrix();
-    if (m_transformMode != None && m_overlayShader && m_overlayShader->isValid() && isValid()) {
-        makeCurrent();
-        rebuildGizmo();
-        doneCurrent();
-        }
-    update();
-    }
-
-void GLWindow::undo() {
-    auto state=currentTransform();
-    if(!m_edit.undo(m_selectedSubMesh,state)) return;
-    applyTransform(state);
-    emit historyChanged(canUndo(),canRedo());
-}
-
-void GLWindow::redo() {
-    auto state=currentTransform();
-    if(!m_edit.redo(m_selectedSubMesh,state)) return;
-    applyTransform(state);
-    emit historyChanged(canUndo(),canRedo());
-}
 
 void GLWindow::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) m_leftDragDist = 0; //左键拖拽距离起点
@@ -1041,7 +854,7 @@ void GLWindow::mousePressEvent(QMouseEvent* event) {
     m_lastMousePos = event->pos();
     m_dragButton = event->button();
     //左键按下命中操作器手柄 进入变换拖拽 不再旋转相机
-    if (event->button() == Qt::LeftButton && m_transformMode != None && hasMesh()) {
+    if (event->button() == Qt::LeftButton && editor().mode != None && hasMesh()) {
         int axis = gizmoHitAxis(event->pos());
         if (axis) {
             m_dragAxis = axis;
@@ -1061,27 +874,26 @@ void GLWindow::mouseMoveEvent(QMouseEvent* event) {
             return;
             }
         m_leftDragDist += qAbs(d.x()) + qAbs(d.y()); //累计 判断是否真拖拽
-        m_camera.orbit(d.x() * 0.008f, d.y() * 0.008f);
+        cameraController().camera().orbit(d.x() * 0.008f, d.y() * 0.008f);
         }
     else if (m_dragButton == Qt::RightButton || m_dragButton == Qt::MiddleButton) {
         if (m_dragButton == Qt::RightButton)
             m_rightDragDist += qAbs(d.x()) + qAbs(d.y()); //累计 判断是否真拖拽
-        m_camera.pan((float)d.x(), (float)d.y());
+        cameraController().camera().pan((float)d.x(), (float)d.y());
         }
     else {
         return;
         }
-    if (!m_fixedFps) update();
+    if (!options().fixedFps) update();
     }
 
 void GLWindow::mouseReleaseEvent(QMouseEvent* event) {
     //操作器拖拽结束 不触发选中
     if (event->button() == Qt::LeftButton && m_dragAxis) {
         //起点与终点不同 入撤销栈 新操作清空重做栈
-        m_edit.endDrag(m_selectedSubMesh,currentTransform(),EditController::ChangePolicy::ComponentTolerance);
+        finishEdit(EditController::ChangePolicy::ComponentTolerance);
         m_dragAxis = 0;
         m_dragButton = Qt::NoButton;
-        emit historyChanged(canUndo(), canRedo());
         update();
         return;
         }
@@ -1101,7 +913,7 @@ void GLWindow::contextMenuEvent(QContextMenuEvent* event) {
     }
 
 void GLWindow::wheelEvent(QWheelEvent* event) {
-    m_camera.zoom(event->angleDelta().y() / 120.0f);
+    cameraController().camera().zoom(event->angleDelta().y() / 120.0f);
     update();
     event->accept();
     }
@@ -1110,25 +922,25 @@ void GLWindow::keyPressEvent(QKeyEvent* event) {
     switch (event->key()) {
         case Qt::Key_W:
         case Qt::Key_Up:
-            m_camera.panLocal(0, 1, 0);
+            cameraController().camera().panLocal(0, 1, 0);
             break;
         case Qt::Key_S:
         case Qt::Key_Down:
-            m_camera.panLocal(0, -1, 0);
+            cameraController().camera().panLocal(0, -1, 0);
             break;
         case Qt::Key_A:
         case Qt::Key_Left:
-            m_camera.panLocal(-1, 0, 0);
+            cameraController().camera().panLocal(-1, 0, 0);
             break;
         case Qt::Key_D:
         case Qt::Key_Right:
-            m_camera.panLocal(1, 0, 0);
+            cameraController().camera().panLocal(1, 0, 0);
             break;
         case Qt::Key_Q:
-            m_camera.panLocal(0, 0, 1);
+            cameraController().camera().panLocal(0, 0, 1);
             break;
         case Qt::Key_E:
-            m_camera.panLocal(0, 0, -1);
+            cameraController().camera().panLocal(0, 0, -1);
             break;
         case Qt::Key_R:
             resetView();
@@ -1204,3 +1016,16 @@ void GLWindow::pushAxisArrow(std::vector<OverlayVertex>& out, QVector3D axis,
     pushLine(out, QVector3D(), coneBase, color);
     pushCone(out, coneBase, d, len * 0.28f, len * 0.055f, color);
     }
+
+void GLWindow::transformModeChanged() { m_dragAxis=0; m_gizmoDirty=true; }
+void GLWindow::antialiasingChanged() {
+    if(isValid() && m_renderer) {
+        makeCurrent();
+        auto& gl=GLFunctions::instance();
+        Scene::options().antialiasing?gl.glEnable(GL_MULTISAMPLE):gl.glDisable(GL_MULTISAMPLE);
+        doneCurrent();
+    }
+}
+void GLWindow::mipmapsChanged(bool enabled) {
+    if(isValid() && m_renderer) { makeCurrent(); m_renderer->setMipmapsEnabled(enabled); doneCurrent(); }
+}

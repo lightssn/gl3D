@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "osgbloader.h"
 #include "meshloader.h"
-#include "renderscene.h"
+#include "scene.h"
 #include "processmemory.h"
 #include <QTemporaryDir>
 #include <QProcess>
@@ -113,7 +113,7 @@ TEST(TileStream, FrustumRejectsOutsideSphere) {
 
 TEST(Osgb, OnDemandWaitsForPagingAndUploadsThenSleepsUntilChanges) {
     QTemporaryDir dir; Mesh mesh; mesh.tileRoot=pageTree(dir);
-    RenderScene scene; scene.setMesh(std::move(mesh));
+    Scene scene; scene.setMesh(std::move(mesh));
     EXPECT_TRUE(scene.options().osgbOnDemand); EXPECT_TRUE(scene.needsTileRedraw());
     scene.updateTiles({800,600}); EXPECT_TRUE(scene.needsTileRedraw());
     for(int frame=0;frame<20;++frame) {
@@ -141,7 +141,7 @@ TEST(Osgb, SharedBoundsFollowVisibleGeometryAndTileTransforms) {
     SubMesh part; part.vertices.resize(3); part.indices={0,1,2};
     part.boundsMin={-1,-1,0}; part.boundsMax={1,1,0};
     mesh.tileRoot->geometry.push_back(part); mesh.bboxMin={-2,-2,-2}; mesh.bboxMax={2,2,2};
-    RenderScene scene; scene.setMesh(std::move(mesh)); scene.markUploaded(0);
+    Scene scene; scene.setMesh(std::move(mesh)); scene.markUploaded(0);
     scene.options().showTileBounds=true; scene.updateTiles({800,600});
     ASSERT_EQ(scene.tileBoundsLines().size(),24);
     EXPECT_EQ(scene.tileBoundsLines()[0],QVector3D(-1,-1,0));
@@ -260,7 +260,7 @@ TEST(TileStream, PixelLodKeepsCoarseUntilDetailReady) {
 TEST(Osgb, SceneCopiesDoNotConsumeSharedSourceTree) {
     QTemporaryDir dir; Mesh mesh;
     ASSERT_TRUE(OsgbLoader::load(QStringList{writeNode(dir,"source.osgb",*triangle())},mesh,nullptr));
-    RenderScene first, second; first.setMesh(mesh); second.setMesh(mesh);
+    Scene first, second; first.setMesh(mesh); second.setMesh(mesh);
     ASSERT_EQ(mesh.tileRoot->geometry.size(),1);
     ASSERT_EQ(first.mesh().subMeshes.size(),1); ASSERT_EQ(second.mesh().subMeshes.size(),1);
     EXPECT_EQ(first.mesh().subMeshes[0].vertices.size(),3);
@@ -321,7 +321,7 @@ TEST(Osgb, MultipleFilesPreserveRelativeCoordinatesAndIndependentOwners) {
     worker.load(paths);
     ASSERT_TRUE(loaded)<<error.toStdString();
     EXPECT_EQ(percent,100);
-    RenderScene scene; scene.setMesh(std::move(mesh));
+    Scene scene; scene.setMesh(std::move(mesh));
     ASSERT_EQ(scene.mesh().subMeshes.size(),2);
     const auto& a=scene.mesh().subMeshes[0]; const auto& b=scene.mesh().subMeshes[1];
     EXPECT_NE(a.tileOwner,b.tileOwner);
@@ -470,15 +470,15 @@ TEST(TileStream, RequiredPageSurvivesBudgetPressureBeforeGpuUpload) {
 }
 
 TEST(Osgb, LevelTintUsesStableSharedPaletteAndStreamedGeometryLevel) {
-    EXPECT_EQ(RenderScene::tileLevelColor(0),QVector3D(0.65f,1.f,0.65f));
-    EXPECT_EQ(RenderScene::tileLevelColor(5),QVector3D(1.f,0.65f,0.65f));
-    EXPECT_EQ(RenderScene::tileLevelColor(9),RenderScene::tileLevelColor(5));
+    EXPECT_EQ(Scene::tileLevelColor(0),QVector3D(0.65f,1.f,0.65f));
+    EXPECT_EQ(Scene::tileLevelColor(5),QVector3D(1.f,0.65f,0.65f));
+    EXPECT_EQ(Scene::tileLevelColor(9),Scene::tileLevelColor(5));
     QTemporaryDir dir; Mesh mesh; mesh.tileRoot=pageTree(dir);
-    RenderScene scene; scene.setMesh(std::move(mesh));
+    Scene scene; scene.setMesh(std::move(mesh));
     EXPECT_EQ(scene.mesh().subMeshes[0].tileLevel,0);
     EXPECT_EQ(scene.tileTint(0),QVector4D());
     scene.options().tileLevelTint=true;
-    EXPECT_EQ(scene.tileTint(0),QVector4D(RenderScene::tileLevelColor(0),0.45f));
+    EXPECT_EQ(scene.tileTint(0),QVector4D(Scene::tileLevelColor(0),0.45f));
     scene.markUploaded(0);
     QElapsedTimer timer; timer.start();
     while(timer.elapsed()<3000 && scene.mesh().subMeshes.size()<2) {
@@ -486,7 +486,7 @@ TEST(Osgb, LevelTintUsesStableSharedPaletteAndStreamedGeometryLevel) {
     }
     ASSERT_EQ(scene.mesh().subMeshes.size(),2);
     EXPECT_EQ(scene.mesh().subMeshes[1].tileLevel,1);
-    EXPECT_EQ(scene.tileTint(1),QVector4D(RenderScene::tileLevelColor(1),0.45f));
+    EXPECT_EQ(scene.tileTint(1),QVector4D(Scene::tileLevelColor(1),0.45f));
     scene.options().tileLevelTint=false; EXPECT_EQ(scene.tileTint(1),QVector4D());
 }
 

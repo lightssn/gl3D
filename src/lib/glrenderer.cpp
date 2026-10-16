@@ -1,8 +1,8 @@
-#include "meshrenderer.h"
+#include "glrenderer.h"
 #include "glcontext.h"
 #include "mesh.h"
 #include "shader.h"
-#include "renderscene.h"
+#include "scene.h"
 #include <QElapsedTimer>
 #include <numeric>
 #include <algorithm>
@@ -10,9 +10,9 @@
 #include <cstdio>
 #include <set>
 
-MeshRenderer::~MeshRenderer() { clear(); }
+GLRenderer::~GLRenderer() { clear(); }
 
-qint64 MeshRenderer::textureCpuBytes() const {
+qint64 GLRenderer::textureCpuBytes() const {
     qint64 total = 0;
     std::set<qint64> images;
     for (const auto& unit : m_units) {
@@ -22,7 +22,7 @@ qint64 MeshRenderer::textureCpuBytes() const {
     return total;
 }
 
-void MeshRenderer::setMipmapsEnabled(bool enabled) {
+void GLRenderer::setMipmapsEnabled(bool enabled) {
     if (m_mipmapsEnabled == enabled) return;
     m_mipmapsEnabled = enabled;
     m_drawOrderDirty = true;
@@ -36,17 +36,7 @@ void MeshRenderer::setMipmapsEnabled(bool enabled) {
     }
 }
 
-void MeshRenderer::setSubMeshVisible(int index, bool visible) {
-    if (index < 0 || index >= static_cast<int>(m_visible.size())) return;
-    m_visible[static_cast<size_t>(index)] = visible;
-}
-
-bool MeshRenderer::subMeshVisible(int index) const {
-    return index >= 0 && index < static_cast<int>(m_visible.size())
-        ? m_visible[static_cast<size_t>(index)] && m_drawable[size_t(index)] : false;
-}
-
-void MeshRenderer::releaseTexture(unsigned int& texture) {
+void GLRenderer::releaseTexture(unsigned int& texture) {
     if(!texture) return;
     for(auto it=m_textures.begin();it!=m_textures.end();++it) if(it->second.id==texture) {
         if(--it->second.references==0) { GLFunctions::instance().glDeleteTextures(1,&texture); m_textures.erase(it); }
@@ -55,7 +45,7 @@ void MeshRenderer::releaseTexture(unsigned int& texture) {
     GLFunctions::instance().glDeleteTextures(1,&texture); texture=0;
 }
 
-void MeshRenderer::uploadTexture(unsigned int& texture, const QImage& image) {
+void GLRenderer::uploadTexture(unsigned int& texture, const QImage& image) {
     if (image.isNull()) return;
     auto found=m_textures.find(image.cacheKey());
     if(found!=m_textures.end()) { texture=found->second.id; ++found->second.references; return; }
@@ -69,7 +59,7 @@ void MeshRenderer::uploadTexture(unsigned int& texture, const QImage& image) {
     gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 }
 
-void MeshRenderer::collectResourceIds(std::vector<unsigned int>& vaos,
+void GLRenderer::collectResourceIds(std::vector<unsigned int>& vaos,
                                       std::vector<unsigned int>& vbos,
                                       std::vector<unsigned int>& ebos,
                                       std::vector<unsigned int>& textures) const {
@@ -87,36 +77,22 @@ void MeshRenderer::collectResourceIds(std::vector<unsigned int>& vaos,
 
 }
 
-void MeshRenderer::setSubMeshTransform(int index, const QMatrix4x4& transform) {
-    if (index < 0 || index >= static_cast<int>(m_transforms.size())) return;
-    m_transforms[static_cast<size_t>(index)] = transform;
-    }
-
-void MeshRenderer::clear() {
+void GLRenderer::clear() {
     for(auto& unit:m_units) releaseUnit(unit);
     m_units.clear();
-    m_drawOrder.clear();
-    m_drawOrderDirty = true;
-    m_drawable.clear();
-    m_owners.clear();
-    m_visible.clear();
-    m_transforms.clear();
+    clearSlots();
 }
 
-void MeshRenderer::upload(const Mesh& mesh) {
+void GLRenderer::upload(const Mesh& mesh) {
     clear();
     auto& gl = GLFunctions::instance();
 
-    m_visible.assign(mesh.subMeshes.size(), true);
-    m_transforms.assign(mesh.subMeshes.size(), QMatrix4x4());
-    for (auto& transform : m_transforms) transform.setToIdentity();
-    m_drawable.assign(mesh.subMeshes.size(), true);
-    m_owners.assign(mesh.subMeshes.size(),-1);
+    resetSlots(mesh.subMeshes.size());
     for (const auto& s : mesh.subMeshes) append(s);
-    printf("[MeshRenderer] 上传 %zu 个子网格\n", m_units.size());
+    printf("[GLRenderer] 上传 %zu 个子网格\n", m_units.size());
 }
 
-void MeshRenderer::append(const SubMesh& s, bool incremental) {
+void GLRenderer::append(const SubMesh& s, bool incremental) {
     auto& gl = GLFunctions::instance();
         DrawUnit u;
         u.indexCount = (int)s.indices.size();
@@ -156,7 +132,7 @@ void MeshRenderer::append(const SubMesh& s, bool incremental) {
                 u.textureImage = tex;
                 uploadTexture(u.texture, u.textureImage);
             } else {
-                printf("[MeshRenderer] 纹理加载失败: %s\n",
+                printf("[GLRenderer] 纹理加载失败: %s\n",
                        s.texturePath.isEmpty() ? "GLB内嵌纹理" : qPrintable(s.texturePath));
             }
         }
@@ -177,7 +153,7 @@ void MeshRenderer::append(const SubMesh& s, bool incremental) {
         m_units.push_back(std::move(u));
 }
 
-void MeshRenderer::releaseUnit(DrawUnit& u) {
+void GLRenderer::releaseUnit(DrawUnit& u) {
     m_drawOrderDirty = true;
     auto& gl=GLFunctions::instance();
     if(u.vao) gl.glDeleteVertexArrays(1,&u.vao);
@@ -189,19 +165,16 @@ void MeshRenderer::releaseUnit(DrawUnit& u) {
     u=DrawUnit();
 }
 
-int MeshRenderer::visibleDrawCount() const {
+int GLRenderer::visibleDrawCount() const {
     int count=0;
     for(size_t i=0;i<m_units.size();++i) if(m_units[i].indexCount && m_visible[i] && m_drawable[i]) ++count;
     return count;
 }
 
-void MeshRenderer::syncTiles(RenderScene& scene) {
+void GLRenderer::syncTiles(Scene& scene) {
     auto& mesh=scene.mesh();
     m_units.resize(mesh.subMeshes.size());
-    m_visible.resize(mesh.subMeshes.size(),true);
-    m_drawable.resize(mesh.subMeshes.size(),false);
-    m_owners.resize(mesh.subMeshes.size(),-1);
-    m_transforms.resize(mesh.subMeshes.size());
+    resizeSlots(mesh.subMeshes.size());
     QElapsedTimer timer; timer.start();
     int uploaded=0;
     size_t byteBudget=4*1024*1024;
@@ -239,29 +212,18 @@ void MeshRenderer::syncTiles(RenderScene& scene) {
             }
         }
         current.tileTint=scene.tileTint(int(i));
-        m_owners[i]=part.tileOwner;
-        m_visible[i]=scene.tileVisible(int(i));
-        m_drawable[i]=scene.drawable(int(i)) && m_units[i].revision==part.revision && m_units[i].compiled;
-        m_transforms[i]=scene.tileTransform(int(i));
+        synchronizeSlot(scene,i,m_units[i].revision==part.revision && m_units[i].compiled);
     }
 }
 
-void MeshRenderer::render(Shader& shader, int onlyIndex) {
+void GLRenderer::render(Shader& shader, int onlyIndex) {
     auto& gl = GLFunctions::instance();
-    if (m_drawOrderDirty || m_drawOrder.size() != m_units.size()) {
-        m_drawOrder.resize(m_units.size());
-        std::iota(m_drawOrder.begin(),m_drawOrder.end(),0);
-        std::stable_sort(m_drawOrder.begin(),m_drawOrder.end(),[&](size_t a,size_t b){return m_units[a].texture<m_units[b].texture;});
-        m_drawOrderDirty = false;
-    }
+    updateDrawOrder(m_units.size(), [&](size_t index) { return qint64(m_units[index].texture); });
     unsigned bound[3]{UINT_MAX,UINT_MAX,UINT_MAX};
     for (size_t i : m_drawOrder) {
-        if (!m_drawable[i] || !m_units[i].indexCount) continue;
-        if (onlyIndex >= 0 && static_cast<int>(i) != onlyIndex &&
-            (onlyIndex >= int(m_owners.size()) || m_owners[size_t(onlyIndex)]<0 || m_owners[i]!=m_owners[size_t(onlyIndex)])) continue;
-        if (!m_visible[i]) continue;
+        if (!acceptsDraw(i, onlyIndex) || !m_units[i].indexCount) continue;
         const auto& u = m_units[i];
-        shader.setMat4("uModel", m_transforms[i].constData());
+        shader.setMat4("uModel", m_matrices[i].constData());
         shader.setInt("uUseTexture", u.texture ? 1 : 0);
         shader.setVec3("uDiffuse", u.kd[0], u.kd[1], u.kd[2]);
         shader.setVec4("uTileTint",u.tileTint.x(),u.tileTint.y(),u.tileTint.z(),u.tileTint.w());

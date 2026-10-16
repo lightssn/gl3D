@@ -6,6 +6,7 @@
 #include <QImage>
 #include <algorithm>
 #include <cmath>
+#include <cfloat>
 #include <set>
 #include <QThreadPool>
 
@@ -391,3 +392,53 @@ void TileStream::update(Mesh& mesh,const Camera& camera,const QSize& viewport,in
     }
     m_stats.loading=int(m_jobs.size()); m_stats.queued=int(std::count_if(m_requests.begin(),m_requests.end(),[](const auto& request) { return !request.node->loading && !request.node->failed; }));
 }
+
+int TileStream::representative(const Mesh& mesh,int slot) const {
+    if(slot<0 || slot>=int(mesh.subMeshes.size())) return slot;
+    const int owner=mesh.subMeshes[size_t(slot)].tileOwner;
+    auto found = m_representatives.find(owner);
+    return found == m_representatives.end() ? slot : found->second;
+    }
+void TileStream::refreshDisplay(const Mesh& mesh,bool showBounds) {
+    m_representatives.clear();
+    for(int i=0;i<int(mesh.subMeshes.size());++i) {
+        const auto& part=mesh.subMeshes[size_t(i)];
+        if(part.resident) m_representatives.emplace(part.tileOwner,i);
+    }
+    std::vector<QVector3D> lines;
+    if(showBounds) {
+        std::function<void(const std::shared_ptr<TileNode>&)> collect=[&](const auto& node) {
+            QVector3D a(FLT_MAX,FLT_MAX,FLT_MAX), b(-FLT_MAX,-FLT_MAX,-FLT_MAX);
+            bool found=false;
+            for(int slot:node->renderSlots) {
+                const auto& part=mesh.subMeshes[size_t(slot)];
+                if(!part.resident || !part.drawable) continue;
+                found=true;
+                for(int k=0; k<3; ++k) {
+                    a[k]=std::min(a[k],part.boundsMin[k]);
+                    b[k]=std::max(b[k],part.boundsMax[k]);
+                    }
+                }
+            if(found) {
+                QVector3D p[8]= {{a.x(),a.y(),a.z()},{b.x(),a.y(),a.z()},
+                        {b.x(),b.y(),a.z()},{a.x(),b.y(),a.z()},{a.x(),a.y(),b.z()},
+                        {b.x(),a.y(),b.z()},{b.x(),b.y(),b.z()},{a.x(),b.y(),b.z()}
+                    };
+                const auto matrix=transform(node->owner);
+                for(auto& point:p) point=matrix.map(point);
+                for(int e=0; e<12; ++e) {
+                    const int u=e<8?e:e-8;
+                    const int v=e<4?(e+1)%4:e<8?(e-3)%4+4:e-8+4;
+                    lines.push_back(p[u]);
+                    lines.push_back(p[v]);
+                    }
+                }
+            for(const auto& child:node->children) collect(child);
+            };
+        collect(mesh.tileRoot);
+        }
+    if(lines!=m_boundsLines) {
+        m_boundsLines=std::move(lines);
+        ++m_boundsRevision;
+        }
+    }

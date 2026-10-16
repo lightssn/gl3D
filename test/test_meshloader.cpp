@@ -7,7 +7,7 @@
 #include <QJsonObject>
 #include <QtEndian>
 #include <cstring>
-#include "renderscene.h"
+#include "scene.h"
 #include "tilenode.h"
 #include <QEventLoop>
 #include <QThread>
@@ -165,7 +165,7 @@ TEST_F(MeshLoaderTest, QueuedResultMovesGeometryWithoutCopy) {
     worker->moveToThread(&thread);
     QObject::connect(&thread,&QThread::finished,worker,&QObject::deleteLater);
     QEventLoop loop;
-    RenderScene scene;
+    Scene scene;
     const Mesh* source=nullptr;
     const Vertex* vertices=nullptr;
     const unsigned* indices=nullptr;
@@ -209,7 +209,7 @@ TEST(MeshLoader, QueuedResultKeepsOriginalOsgbTree) {
     worker->moveToThread(&thread);
     QObject::connect(&thread,&QThread::finished,worker,&QObject::deleteLater);
     QEventLoop loop;
-    RenderScene scene;
+    Scene scene;
     const TileNode* root=nullptr;
     const Vertex* vertices=nullptr;
     bool received=false;

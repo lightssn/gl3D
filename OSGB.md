@@ -64,7 +64,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 分页回收使用帧编号保护当前视野需要的页及其祖先，包括已读取但仍在增量 GPU 上传的页。不再通过毫秒时间是否相等判断本帧使用，避免预算紧张时细页反复加载后被回收。
 
-层级列表移除单位列，单位规则保留在说明中。可勾选按层级叠加半透明颜色，L0 浅绿、L5 浅红，中间经浅黄渐变，混合强度 45%。共享 RenderScene 提供层级色和开关，两个后端使用相同的颜色参数。颜色叠在原材质光照结果上，模型仍保持原有深度遮挡；法线/UV 调试视图和选中描边保留原显示。L5 以上使用同一浅红，色标不随新层发现而改变。
+层级列表移除单位列，单位规则保留在说明中。可勾选按层级叠加半透明颜色，L0 浅绿、L5 浅红，中间经浅黄渐变，混合强度 45%。共享 Scene 提供层级色和开关，两个后端使用相同的颜色参数。颜色叠在原材质光照结果上，模型仍保持原有深度遮挡；法线/UV 调试视图和选中描边保留原显示。L5 以上使用同一浅红，色标不随新层发现而改变。
 
 后台分页加载最多同时 4 个任务。待提交队列每帧按当前视野重建，按瓦片中心到屏幕中心的像素距离由近到远排序，同距离时屏幕占比大的页优先。已提交页的变换后包围球离开视锥或所属瓦片被隐藏时，发出独立取消信号；不再安装取消结果，不计为加载失败。OSG 底层文件读取无法立即中断，返回后停止后续几何转换。取消任务实际退出前仍占一个名额，避免快速移动视野时任务无限堆积。半个瓦片仍在视野内时不取消。
 
@@ -81,5 +81,5 @@ Retained page index and layered eviction:
 - Parent reloads reuse retained external branches. Active pages and loading paths remain protected.
 
 Merge integration:
-- Tile bounds use shared RenderScene line geometry for both backends and follow visible geometry, tile transforms and hiding. Buffers refresh only when bounds change.
+- Tile bounds use shared Scene line geometry for both backends and follow visible geometry, tile transforms and hiding. Buffers refresh only when bounds change.
 - The parallel OsgbStream pipeline is superseded by TileStream; the 1024 MiB budget, retained index, layered eviction, multi-selection and editor state remain intact.

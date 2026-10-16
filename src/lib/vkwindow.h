@@ -1,8 +1,7 @@
 #pragma once
 #if defined(GL3D_HAS_VULKAN)
 #include "gl3d_export.h"
-#include "renderscene.h"
-#include "renderview.h"
+#include "scene.h"
 #include "editcontroller.h"
 #include "debugstats.h"
 #include <QVulkanWindow>
@@ -15,7 +14,7 @@
 class MeshLoader;
 
 // Qt 管理 Vulkan surface、swapchain 和同步对象，渲染器负责录制绘制命令。
-class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
+class GL3D_EXPORT VKWindow final : public QVulkanWindow, public Scene {
         Q_OBJECT
 
     public:
@@ -32,62 +31,21 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         void meshUploadFinished();
         void updateTiles();
         void clearMesh();
-        void resetView();
-        void setUpAxis(UpAxis axis) override;
-        void setOrtho(bool enabled);
-        void setWireframe(bool enabled);
-        void setTileBounds(bool enabled) override;
+
         void requestRedraw() override {
-            m_scene.invalidateTiles();
+            Scene::invalidateTiles();
             requestUpdate();
             }
-        void setAntialiasing(bool enabled);
+
         bool supportsAntialiasing() const override {
             return m_multisamplingAvailable;
             }
-        void setMipmaps(bool enabled);
-        void setDepthTest(bool enabled);
-        void setFaceCulling(bool enabled);
-        void setPbr(bool enabled);
-        void setNormalMap(bool enabled);
-        void setFixedFpsEnabled(bool enabled);
-        void setTargetFps(int fps);
-        void setDebugView(int mode);
-        void setOutlineWidth(float width);
-        void setTransformMode(int mode);
-        int transformMode() const {
-            return m_transformMode;
-            }
-        void undo();
-        void redo();
-        bool canUndo() const {
-            return m_edit.canUndo();
-            }
-        bool canRedo() const {
-            return m_edit.canRedo();
-            }
-        int selectedSubMesh() const {
-            return m_scene.selection().index();
-            }
-        void selectSubMesh(int index);
+
         bool takePendingPick(QPoint& position);
         int pickSubMesh(const QPoint& pos) const;
-        int subMeshCount() const {
-            return int(m_scene.mesh().subMeshes.size());
-            }
-        QString subMeshName(int index) const;
-        bool subMeshVisible(int index) const;
-        void setSubMeshVisible(int index, bool visible);
-        float outlineWidth() const {
-            return m_scene.options().outlineWidth;
-            }
+
         DebugSnapshot debugSnapshot() override;
-        void setClearColor(float red, float green, float blue) override;
-        const float* clearColor() const {
-            return m_clearColor;
-            }
-        QMatrix4x4 subMeshTransform(int index) const;
-        QQuaternion subMeshRotation(int index) const;
+
         float gizmoRadius() const;
         void recordFrame(int drawCalls);
         void setResourceStats(qint64 vertexBytes, qint64 indexBytes, qint64 textureBytes,
@@ -106,17 +64,9 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         uint64_t gridRevision() const {
             return m_gridRevision;
             }
-        bool mipmapsEnabled() const {
-            return m_mipmaps;
-            }
+
         bool multisamplingAvailable() const {
             return m_multisamplingAvailable;
-            }
-        const RenderScene& scene() const {
-            return m_scene;
-            }
-        RenderScene& scene() {
-            return m_scene;
             }
         RenderBackend backend() const override {
             return RenderBackend::Vulkan;
@@ -148,29 +98,19 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         QThread* m_loadThread = nullptr;
         MeshLoader* m_loadWorker = nullptr;
         QString m_currentPath;
-        RenderScene m_scene;
         uint64_t m_modelRevision = 0;
         uint64_t m_textureRevision = 0;
         uint64_t m_pipelineRevision = 0;
         uint64_t m_gridRevision = 0;
-        bool m_mipmaps = false;
         bool m_multisamplingAvailable = false;
-        struct Bounds {
-            QVector3D min, max;
-            };
         using TransformState = EditTransform;
-        EditController m_edit;
-        void commitTileTransform();
-        std::vector<Bounds> m_bounds;
-        std::vector<bool> m_visible;
-        std::vector<TransformState>& m_transforms = m_edit.states();
+
         QPoint m_lastMousePos;
         QPoint m_pendingPick{-1, -1};
         Qt::MouseButton m_dragButton = Qt::NoButton;
         int m_dragDistance = 0;
         int m_dragAxis = 0;
         float m_dragAngle = 0.0f;
-        int m_transformMode = 0;
         QTimer m_renderTimer;
         QTimer m_idleFpsTimer;
         QElapsedTimer m_fpsTimer;
@@ -183,7 +123,16 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public RenderView {
         qint64 m_framebufferBytes = 0;
         int m_textureCount = 0, m_bufferCount = 0, m_ownedFramebufferCount = 0;
         QString m_deviceName, m_apiVersion;
-        float m_clearColor[3] = {0.13f, 0.13f, 0.16f};
+        void transformModeChanged() override { m_dragAxis=0; }
+        void mipmapsChanged(bool) override { ++m_textureRevision; }
+        QTimer* redrawTimer() override { return &m_renderTimer; }
+        void pipelineOptionsChanged() override { ++m_pipelineRevision; }
+        void overlaysChanged() override { ++m_gridRevision; }
+        void notifyHistoryChanged(bool undo, bool redo) override { emit historyChanged(undo,redo); }
+        void notifySelectionChanged(int index, bool changed) override {
+            if(changed) emit selectionChanged(index>=0);
+            emit subMeshSelected(index);
+        }
         void onLoadFinished(bool ok, const QString& error, std::shared_ptr<Mesh> mesh);
         int hitGizmo(const QPoint& pos) const;
         QVector3D gizmoAxis(int index) const;

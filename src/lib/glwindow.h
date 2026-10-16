@@ -7,8 +7,7 @@
 #include "renderoptions.h"
 #include "cameracontroller.h"
 #include "selectioncontroller.h"
-#include "renderscene.h"
-#include "renderview.h"
+#include "scene.h"
 #include "editcontroller.h"
 #include <QOpenGLWindow>
 #include <QElapsedTimer>
@@ -19,7 +18,7 @@
 
 //前向声明
 class Shader;
-class MeshRenderer;
+class GLRenderer;
 class QContextMenuEvent;
 class QThread;
 class QTimer;
@@ -27,7 +26,7 @@ class MeshLoader;
 
 //OpenGL渲染视口 负责context生命周期/渲染循环/键鼠交互
 //交互 左键旋转+点击选中 右键点击弹菜单+右键拖拽平移 滚轮缩放 WASD平移 R复位
-class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
+class GL3D_EXPORT GLWindow : public QOpenGLWindow, public Scene {
         Q_OBJECT
         //操作器模式 控制模型中央显示何种手柄
         enum TransformMode { None = 0, Translate = 1, Rotate = 2, Scale = 3 };
@@ -44,27 +43,17 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
 
         std::unique_ptr<Shader> m_shader;
         std::unique_ptr<Shader> m_overlayShader;
-        std::unique_ptr<MeshRenderer> m_renderer;
-        RenderScene m_scene;
-        Mesh& m_mesh = m_scene.mesh();
-        Camera& m_camera = m_scene.cameraController().camera();
+        std::unique_ptr<GLRenderer> m_renderer;
 
         OverlayMesh m_gridMesh;       //XY平面网格
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
         OverlayMesh m_gizmoMesh;      //模型中央操作器
-        TransformMode m_transformMode = None;
         bool m_gizmoDirty = false;
         OverlayMesh m_tileBoundsMesh;
         uint64_t m_tileBoundsRevision = 0;
-        int& m_selectedSubMesh = m_scene.selection().indexRef();
 
         //模型变换 T(c+pos)*R*S*T(-c) 绕模型中心旋转缩放 三模式共享
         using TransformState = EditTransform;
-        EditController m_edit;
-        QVector3D& m_transformPos = m_edit.current().position;
-        QQuaternion& m_transformRot = m_edit.current().rotation;
-        QVector3D& m_transformScale = m_edit.current().scale;
-        QMatrix4x4 m_modelMatrix;     //合成后的uModel 变换时刷新
 
         //操作器拖拽状态 按下命中轴开始 移动变换 松开结束
         int m_dragAxis = 0;           //0无 1X 2Y 3Z
@@ -73,7 +62,6 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         QVector3D m_dragCenter;       //拖拽参考点 变换后的模型中心
 
         //变换历史 撤销/重做 每次拖拽前的状态入撤销栈
-        std::vector<QVector3D>& m_subMeshCenters = m_scene.selection().centers();
 
         //后台加载 解析在worker线程 解析完主线程上传显存
         QThread* m_loadThread = nullptr;
@@ -81,7 +69,7 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         MeshLoader* m_loadWorker = nullptr;
         bool m_loading = false; //加载中 防止重复触发
         QString m_currentPath;  //当前加载的模型路径 状态栏显示文件名用
-        void onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> mesh);
+        void onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> loadedMesh);
 
         //离屏拾取FBO 点击处读颜色判断是否命中模型
         unsigned int m_pickFbo = 0, m_pickColor = 0, m_pickDepth = 0;
@@ -94,8 +82,6 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         int m_rightDragDist = 0;      //右键拖拽累计距离 区分点击弹菜单与拖拽平移
         int m_leftDragDist = 0;       //左键拖拽累计距离 区分点击选中与拖拽旋转
 
-        float m_clearColor[3] = { 0.13f, 0.13f, 0.16f };
-
         int m_frameCount = 0;         //1秒窗口内帧数
         int m_lastFps = 0;
         QElapsedTimer m_fpsTimer;
@@ -103,21 +89,6 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
         QTimer* m_renderTimer = nullptr;
         QTimer* m_idleFpsTimer = nullptr;
         std::vector<float> m_frameTimesMs;
-        RenderOptions& m_renderOptions = m_scene.options();
-        bool& m_wireframe = m_renderOptions.wireframe;
-        float& m_outlineWidth = m_renderOptions.outlineWidth;
-        bool& m_antialiasing = m_renderOptions.antialiasing;
-        bool& m_showGrid = m_renderOptions.showGrid;
-        bool& m_showGizmo = m_renderOptions.showGizmo;
-        bool& m_showSelection = m_renderOptions.showSelection;
-        bool& m_showAxes = m_renderOptions.showAxes;
-        bool& m_depthTest = m_renderOptions.depthTest;
-        bool& m_faceCulling = m_renderOptions.faceCulling;
-        bool& m_pbr = m_renderOptions.pbr;
-        bool& m_normalMap = m_renderOptions.normalMap;
-        bool& m_fixedFps = m_renderOptions.fixedFps;
-        int& m_targetFps = m_renderOptions.targetFps;
-        int& m_debugView = m_renderOptions.debugView;
         int m_frameDrawCalls = 0;
         int m_lastDrawCalls = 0;
         DebugSnapshot collectDebugSnapshot();
@@ -146,6 +117,18 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
 
         //操作器拖拽 射线拾取轴/平面交点 组合模型矩阵
         void updateMeshMatrix();
+        QTimer* redrawTimer() override { return m_renderTimer; }
+        void transformsChanged() override;
+        void transformModeChanged() override;
+        void antialiasingChanged() override;
+        void mipmapsChanged(bool enabled) override;
+        void visibilityChanged(int index, bool visible) override;
+        void overlaysChanged() override;
+        void notifyHistoryChanged(bool undo, bool redo) override { emit historyChanged(undo,redo); }
+        void notifySelectionChanged(int index, bool changed) override {
+            if(changed) emit selectionChanged(index>=0);
+            emit subMeshSelected(index);
+        }
         void pickingRay(const QPoint& pos, QVector3D& origin, QVector3D& dir);
         QPointF projectToScreen(const QMatrix4x4& proj, const QMatrix4x4& view, const QVector3D& p);
         bool rayLineParam(const QVector3D& origin, const QVector3D& dir,
@@ -159,8 +142,6 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
 
         //缩放轴随模型旋转 平移/旋转保持世界轴向
         QVector3D gizmoAxisDir(int idx) const;
-        TransformState currentTransform() const;
-        void applyTransform(const TransformState& s);
 
     public:
         explicit GLWindow(QWindow* parent = nullptr);
@@ -168,48 +149,16 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public RenderView {
 
         //加载模型文件 成功返回true并发出meshLoaded
         bool loadMeshAsync(const QStringList& paths);
-        void resetView();
-        void setUpAxis(UpAxis axis) override;
-        void setClearColor(float r, float g, float b); //主题切换联动视口底色
-        bool hasMesh() const;
+
         void deleteMesh();          //清除当前模型与选中状态
         bool isLoading() const { return m_loading; }
-        void undo();                 //撤销上次变换
-        void redo();                 //重做被撤销的变换
-        bool canUndo() const { return m_edit.canUndo(); }
-        bool canRedo() const { return m_edit.canRedo(); }
 
-        void setOrtho(bool on);          //true正交 false透视
-        void setTransformMode(int mode); //0无 1平移 2旋转 3缩放
-        void setWireframe(bool on);      //true线框模式 可见三角面带浅灰描边
-        void setAntialiasing(bool on);
-        void setTileBounds(bool enabled) override;
-        void requestRedraw() override { m_scene.invalidateTiles(); update(); }
-        void setMipmaps(bool on);
-        void setShowGrid(bool on);
-        void setShowGizmo(bool on);
-        void setShowSelection(bool on);
-        void setShowAxes(bool on);
-        void setDepthTest(bool on);
-        void setFaceCulling(bool on);
-        void setPbr(bool on);
-        void setNormalMap(bool on);
-        void setFixedFpsEnabled(bool on);
-        void setTargetFps(int fps);
-        void setDebugView(int mode);
-        float outlineWidth() const { return m_outlineWidth; }
-        const RenderOptions& renderOptions() const { return m_renderOptions; }
-        void setOutlineWidth(float width);
-        int subMeshCount() const;
-        QString subMeshName(int index) const;
-        bool subMeshVisible(int index) const;
-        void setSubMeshVisible(int index, bool visible);
-        int selectedSubMesh() const { return m_selectedSubMesh; }
-        void selectSubMesh(int index);
+        void requestRedraw() override { Scene::invalidateTiles(); update(); }
+
+        const RenderOptions& renderOptions() const { return options(); }
+
         DebugSnapshot debugSnapshot();
         RenderBackend backend() const override { return RenderBackend::OpenGL; }
-        RenderScene& scene() override { return m_scene; }
-        const RenderScene& scene() const override { return m_scene; }
 
     signals:
         void fpsUpdated(int fps);

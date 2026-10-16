@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gl3d_export.h"
+#include "renderer.h"
 #include <vector>
 #include <QImage>
 #include <QMatrix4x4>
@@ -8,25 +8,22 @@
 #include <map>
 
 class Shader;
-class RenderScene;
+class Scene;
 struct Mesh;
 struct SubMesh;
 
 //网格GPU资源 每个子网格一组VAO/VBO/EBO+纹理 生命周期须在context内
-class GL3D_EXPORT MeshRenderer {
+class GL3D_EXPORT GLRenderer final : public Renderer {
 public:
-    MeshRenderer() = default;
-    ~MeshRenderer();
+    GLRenderer() = default;
+    ~GLRenderer() override;
 
-    MeshRenderer(const MeshRenderer&) = delete;
-    MeshRenderer& operator=(const MeshRenderer&) = delete;
+    GLRenderer(const GLRenderer&) = delete;
+    GLRenderer& operator=(const GLRenderer&) = delete;
 
     void upload(const Mesh& mesh);   //CPU网格→显存 旧资源先释放
-    void syncTiles(RenderScene& scene);
+    void syncTiles(Scene& scene);
     void setMipmapsEnabled(bool enabled);
-    void setSubMeshVisible(int index, bool visible);
-    bool subMeshVisible(int index) const;
-    void setSubMeshTransform(int index, const QMatrix4x4& transform);
     void render(Shader& shader, int onlyIndex = -1);     //逐子网格绘制
     void clear();                    //释放全部GL资源
     bool empty() const { return m_units.empty(); }
@@ -52,13 +49,7 @@ private:
         bool compiled = true;
     };
     std::vector<DrawUnit> m_units;
-    std::vector<size_t> m_drawOrder;
-    bool m_drawOrderDirty = true;
-    std::vector<bool> m_visible;
-    std::vector<QMatrix4x4> m_transforms;
     bool m_mipmapsEnabled = false;
-    std::vector<bool> m_drawable;
-    std::vector<int> m_owners;
     struct SharedTexture { unsigned int id; int references; };
     std::map<qint64, SharedTexture> m_textures;
     void releaseTexture(unsigned int& texture);

@@ -12,9 +12,8 @@ add_library(gl3d_core SHARED
     renderoptions.h
     cameracontroller.h
     selectioncontroller.h
-    renderscene.h
-    renderscene.cpp
-    renderview.h
+    scene.h
+    scene.cpp
     renderframe.h
     mesh.h
     mesh.cpp
@@ -25,8 +24,10 @@ add_library(gl3d_core SHARED
     camera.cpp
     shader.h
     shader.cpp
-    meshrenderer.h
-    meshrenderer.cpp
+    renderer.h
+    renderer.cpp
+    glrenderer.h
+    glrenderer.cpp
     glwindow.h
     glwindow.cpp
 )
@@ -41,7 +42,8 @@ if(GL3D_HAS_VULKAN)
     target_sources(gl3d_core PRIVATE
         vkwindow.h
         vkwindow.cpp
-        vkwindow_input.cpp
+        vkrenderer.h
+        vkrenderer.cpp
     )
     target_compile_definitions(gl3d_core PUBLIC GL3D_HAS_VULKAN=1)
     target_link_libraries(gl3d_core PUBLIC Vulkan::Vulkan)

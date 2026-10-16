@@ -1,6 +1,6 @@
 #include "mainwindow.h"
 #include "meshloader.h"
-#include "renderscene.h"
+#include "scene.h"
 
 #include <QApplication>
 #include <QFont>
@@ -26,7 +26,7 @@ static int runInfo(const QString& path) {
         fprintf(stderr, "[gl3d] 加载失败: %s\n", qPrintable(err));
         return 1;
         }
-    RenderScene infoScene;
+    Scene infoScene;
     if (mesh.tileRoot) {
         infoScene.setMesh(std::move(mesh), path);
         mesh = infoScene.mesh();

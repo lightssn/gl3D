@@ -1,11 +1,11 @@
 #pragma once
 #include <QWidget>
-class QLabel; class QTableWidget; class FrameGraph; class RenderView; class QTimer; class QListWidget; class QShowEvent; class QDoubleSpinBox; class QCheckBox; class QComboBox; class QSpinBox; class QGroupBox;
+class QLabel; class QTableWidget; class FrameGraph; class Scene; class QTimer; class QListWidget; class QShowEvent; class QDoubleSpinBox; class QCheckBox; class QComboBox; class QSpinBox; class QGroupBox;
 class DebugWindow : public QWidget {
     Q_OBJECT
 public:
-    explicit DebugWindow(RenderView* view, QWidget* parent = nullptr);
-    void setRenderView(RenderView* view);
+    explicit DebugWindow(Scene* view, QWidget* parent = nullptr);
+    void setScene(Scene* view);
     void setNightMode(bool night);
 protected:
     void showEvent(QShowEvent* event) override;
@@ -14,7 +14,7 @@ private:
     void refreshSubMeshes();
     void refreshTileLevels();
     void applyTileLevel(int row, bool overrideRange);
-    RenderView* m_renderView; QLabel* m_driverLabel; QLabel* m_cameraLabel; QLabel* m_timingLabel;
+    Scene* m_scene; QLabel* m_driverLabel; QLabel* m_cameraLabel; QLabel* m_timingLabel;
     QTableWidget* m_levels;
     QGroupBox* m_levelsBox;
     QCheckBox* m_levelTint;
