@@ -92,13 +92,6 @@ static QByteArray readBinary(const QString& path) {
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
     }
 
-static QImage loadTextureImage(const QByteArray& bytes, const QString& path, bool flipVertically) {
-    QImage image = !bytes.isEmpty() ? QImage::fromData(bytes) : QImage(path);
-    if (image.isNull()) return {};
-    image = image.convertToFormat(QImage::Format_RGBA8888);
-    return flipVertically ? image.mirrored() : image;
-    }
-
 class VKWindowRenderer final : public QVulkanWindowRenderer {
     public:
         explicit VKWindowRenderer(VKWindow* window) : m_window(window) {}
@@ -603,7 +596,7 @@ private:
             for (DrawRange& range : m_ranges) range.descriptor = VK_NULL_HANDLE;
             }
 
-        bool createTexture(TextureResource& texture) {
+        bool uploadTexture(TextureResource& texture) {
             if (texture.source.isNull()) return true;
             const qint64 key=texture.source.cacheKey();
             auto cached=m_sharedTextures.find(key);
@@ -1196,7 +1189,7 @@ private:
             if(!m_whiteTexture.view) {
                 m_whiteTexture.source=QImage(1,1,QImage::Format_RGBA8888);
                 m_whiteTexture.source.fill(Qt::white);
-                if(!createTexture(m_whiteTexture)) return;
+                if(!uploadTexture(m_whiteTexture)) return;
                 }
             if(!m_descriptorPool || m_tileCapacity<mesh.subMeshes.size()) {
                 m_df->vkDeviceWaitIdle(m_device);
@@ -1238,8 +1231,14 @@ private:
                     range.revision=0;
                     continue;
                     }
-                range.base.source=!part.baseImage.isNull()?part.baseImage:loadTextureImage(part.textureData,part.texturePath,part.flipTextureVertically);
-                if(!createTexture(range.base)) {
+                QImage image = !part.baseImage.isNull() ? part.baseImage
+                    : (!part.textureData.isEmpty() ? QImage::fromData(part.textureData) : QImage(part.texturePath));
+                if (!image.isNull()) {
+                    // 保留已解码图片的缓存标识，上传时再转换格式，避免重复显存资源。
+                    range.base.source = !part.baseImage.isNull() ? image : image.convertToFormat(QImage::Format_RGBA8888);
+                    if (part.flipTextureVertically) range.base.source = range.base.source.mirrored();
+                }
+                if(!uploadTexture(range.base)) {
                     range.revision=0;
                     continue;
                     }
@@ -1297,12 +1296,23 @@ private:
                 range.color = subMesh.diffuseColor;
                 range.metallic = subMesh.metallicFactor;
                 range.roughness = subMesh.roughnessFactor;
-                range.base.source = loadTextureImage(subMesh.textureData, subMesh.texturePath,
-                                                     subMesh.flipTextureVertically);
-                range.metalRough.source = loadTextureImage(subMesh.metallicRoughnessData,
-                    subMesh.metallicRoughnessPath, subMesh.flipTextureVertically);
-                range.normal.source = loadTextureImage(subMesh.normalData, subMesh.normalPath,
-                                                       subMesh.flipTextureVertically);
+                // 与OpenGL一致，先准备材质图片和UV方向，再上传纹理。
+                QImage image = !subMesh.baseImage.isNull() ? subMesh.baseImage
+                    : (!subMesh.textureData.isEmpty() ? QImage::fromData(subMesh.textureData) : QImage(subMesh.texturePath));
+                if (!image.isNull()) {
+                    range.base.source = !subMesh.baseImage.isNull() ? image : image.convertToFormat(QImage::Format_RGBA8888);
+                    if (subMesh.flipTextureVertically) range.base.source = range.base.source.mirrored();
+                }
+                auto loadMaterialImage = [&](const QByteArray& data, const QString& path, QImage& target) {
+                    if (!data.isEmpty()) target = QImage::fromData(data);
+                    else if (!path.isEmpty()) target = QImage(path);
+                    if (!target.isNull()) {
+                        target = target.convertToFormat(QImage::Format_RGBA8888);
+                        if (subMesh.flipTextureVertically) target = target.mirrored();
+                    }
+                };
+                loadMaterialImage(subMesh.metallicRoughnessData, subMesh.metallicRoughnessPath, range.metalRough.source);
+                loadMaterialImage(subMesh.normalData, subMesh.normalPath, range.normal.source);
                 vertices.insert(vertices.end(), subMesh.vertices.begin(), subMesh.vertices.end());
                 for (unsigned int index : subMesh.indices) indices.push_back(index);
                 m_ranges.push_back(range);
@@ -1321,7 +1331,7 @@ private:
             if (!m_whiteTexture.view) {
                 m_whiteTexture.source = QImage(1, 1, QImage::Format_RGBA8888);
                 m_whiteTexture.source.fill(Qt::white);
-                if (!createTexture(m_whiteTexture)) {
+                if (!uploadTexture(m_whiteTexture)) {
                     qWarning() << "Vulkan fallback texture creation failed";
                     return;
                     }
@@ -1343,13 +1353,13 @@ private:
             destroyMeshDescriptors();
             destroyTextures();
             destroyTexture(m_whiteTexture);
-            if(!createTexture(m_whiteTexture)) return;
+            if(!uploadTexture(m_whiteTexture)) return;
             bool uploaded = true;
             for (DrawRange& range : m_ranges)
                 for (TextureResource* texture : {
                             &range.base, &range.metalRough, &range.normal
                         })
-                    if (!texture->source.isNull() && !createTexture(*texture)) uploaded = false;
+                    if (!texture->source.isNull() && !uploadTexture(*texture)) uploaded = false;
             if (!uploaded) qWarning() << "One or more Vulkan textures could not be uploaded";
             if (!createMeshDescriptors()) qWarning() << "Vulkan model descriptors unavailable";
             m_uploadedTextureRevision = m_window->textureRevision();
