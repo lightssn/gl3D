@@ -89,20 +89,20 @@ DebugWindow::DebugWindow(Scene* view, QWidget* parent) : QWidget(parent), m_scen
     m_debugView = debugView;
     m_upAxis = new QComboBox(viewBox);
     m_upAxis->addItems({"Y", "Z"});
-    viewLayout->addWidget(new QLabel(QStringLiteral("\u5411\u4e0a\u8f74"), viewBox), 1, 0);
+    viewLayout->addWidget(new QLabel(QStringLiteral("向上轴"), viewBox), 1, 0);
     viewLayout->addWidget(m_upAxis, 1, 1);
     connect(m_upAxis, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
         [this](int index) { m_scene->setUpAxis(index == 1 ? UpAxis::Z : UpAxis::Y); });
     m_cameraLabel = new QLabel(content); layout->addWidget(m_cameraLabel);
 
-    auto* levelsBox = m_levelsBox = new QGroupBox(QStringLiteral("\u91d1\u5b57\u5854\u5c42\u7ea7\uff08\u5df2\u53d1\u73b0\uff09"), content);
+    auto* levelsBox = m_levelsBox = new QGroupBox(QStringLiteral("金字塔层级（已发现）"), content);
     m_osgbBox=new QGroupBox("OSGB",content);
     auto* osgbLayout=new QHBoxLayout(m_osgbBox);
-    m_onDemand=new QCheckBox(QStringLiteral("\u6309\u9700\u6a21\u5f0f"),m_osgbBox);
+    m_onDemand=new QCheckBox(QStringLiteral("按需模式"),m_osgbBox);
     m_onDemand->setChecked(view->options().osgbOnDemand);
-    m_onDemand->setToolTip(QStringLiteral("\u89c6\u91ce\u5185\u74e6\u7247\u52a0\u8f7d\u548c\u4e0a\u4f20\u5b8c\u6210\u540e\u505c\u6b62\u91cd\u7ed8\uff0c\u7528\u6237\u64cd\u4f5c\u540e\u6062\u590d\u3002"));
+    m_onDemand->setToolTip(QStringLiteral("视野内瓦片加载和上传完成后停止重绘，用户操作后恢复。"));
     osgbLayout->addWidget(m_onDemand); layout->addWidget(m_osgbBox);
-    m_tileBounds=new QCheckBox(QStringLiteral("\u663e\u793a\u74e6\u7247\u5916\u6846"),m_osgbBox);
+    m_tileBounds=new QCheckBox(QStringLiteral("显示瓦片外框"),m_osgbBox);
     osgbLayout->addWidget(m_tileBounds);
     connect(m_tileBounds,&QCheckBox::toggled,this,[this](bool enabled) { m_scene->setTileBounds(enabled); });
     m_osgbBox->setVisible(view->tiled());
@@ -111,29 +111,29 @@ DebugWindow::DebugWindow(Scene* view, QWidget* parent) : QWidget(parent), m_scen
         m_scene->requestRedraw();
     });
     auto* levelsLayout = new QVBoxLayout(levelsBox);
-    levelsBox->setToolTip(QStringLiteral("\u7ec6\u5c42\u968f\u5206\u9875\u52a0\u8f7d\u9010\u6b65\u53d1\u73b0\u3002L0 \u6700\u7c97\uff1b\u8ddd\u79bb\u4f7f\u7528\u6a21\u578b\u5355\u4f4d\uff0c\u50cf\u7d20 LOD \u4f7f\u7528 px\u3002\n\u53d6\u6d88\u52fe\u9009\u9690\u85cf\u8be5\u5c42\uff0c\u4ecd\u53ef\u8bbf\u95ee\u66f4\u7ec6\u5c42\u3002"));
+    levelsBox->setToolTip(QStringLiteral("细层随分页加载逐步发现。L0 最粗；距离使用模型单位，像素 LOD 使用 px。\n取消勾选隐藏该层，仍可访问更细层。"));
     levelsBox->setVisible(view->tiled());
-    m_levelTint = new QCheckBox(QStringLiteral("\u6309\u5c42\u7ea7\u53e0\u52a0\u534a\u900f\u660e\u989c\u8272"),levelsBox);
+    m_levelTint = new QCheckBox(QStringLiteral("按层级叠加半透明颜色"),levelsBox);
     connect(m_levelTint,&QCheckBox::toggled,this,[this](bool enabled) { m_scene->options().tileLevelTint=enabled; m_scene->requestRedraw(); });
     levelsLayout->addWidget(m_levelTint);
     m_levels = new QTableWidget(0,3,levelsBox);
-    m_levels->setHorizontalHeaderLabels({QStringLiteral("\u5c42\u7ea7"),QStringLiteral("\u6700\u8fd1"),QStringLiteral("\u6700\u8fdc")});
+    m_levels->setHorizontalHeaderLabels({QStringLiteral("层级"),QStringLiteral("最近"),QStringLiteral("最远")});
     m_levels->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_levels->verticalHeader()->hide(); m_levels->setMinimumHeight(110); m_levels->setMaximumHeight(210);
     m_levels->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_levels->setToolTip(levelsBox->toolTip());
     levelsLayout->addWidget(m_levels);
-    auto* resetLevels = new QPushButton(QStringLiteral("\u6062\u590d\u539f\u59cb LOD \u8bbe\u7f6e"),levelsBox);
+    auto* resetLevels = new QPushButton(QStringLiteral("恢复原始 LOD 设置"),levelsBox);
     connect(resetLevels,&QPushButton::clicked,this,[this] { m_scene->resetTileLevels(); m_scene->requestRedraw(); refreshTileLevels(); });
     levelsLayout->addWidget(resetLevels); layout->addWidget(levelsBox);
 
-    auto* cacheBox=m_cacheBox=new QGroupBox(QStringLiteral("\u74e6\u7247\u7f13\u5b58"),content);
+    auto* cacheBox=m_cacheBox=new QGroupBox(QStringLiteral("瓦片缓存"),content);
     cacheBox->setVisible(view->tiled());
     auto* cacheLayout=new QGridLayout(cacheBox);
     m_cacheBudget=new QSpinBox(cacheBox); m_cacheBudget->setRange(1,65536); m_cacheBudget->setValue(1024); m_cacheBudget->setSuffix(" MiB");
-    cacheLayout->addWidget(new QLabel(QStringLiteral("CPU + GPU \u6570\u636e\u9884\u7b97"),cacheBox),0,0); cacheLayout->addWidget(m_cacheBudget,0,1);
-    m_cacheEviction=new QCheckBox(QStringLiteral("\u8d85\u9884\u7b97\u65f6\u4f18\u5148\u56de\u6536\u6df1\u5c42\u95f2\u7f6e\u9875"),cacheBox);
-    m_cacheEviction->setToolTip(QStringLiteral("\u9ed8\u8ba4\u4e0d\u56de\u6536\uff1b\u542f\u7528\u540e\u4fdd\u62a4\u5f53\u524d\u9700\u8981\u3001\u52a0\u8f7d\u4e2d\u548c\u9009\u4e2d\u7684\u9875\u3002\u9884\u7b97\u4e0d\u662f\u8fdb\u7a0b\u5185\u5b58\u4e0a\u9650\u3002"));
+    cacheLayout->addWidget(new QLabel(QStringLiteral("CPU + GPU 数据预算"),cacheBox),0,0); cacheLayout->addWidget(m_cacheBudget,0,1);
+    m_cacheEviction=new QCheckBox(QStringLiteral("超预算时优先回收深层闲置页"),cacheBox);
+    m_cacheEviction->setToolTip(QStringLiteral("默认不回收；启用后保护当前需要、加载中和选中的页。预算不是进程内存上限。"));
     cacheLayout->addWidget(m_cacheEviction,1,0,1,2);
     auto policy=[this] { m_scene->setTileCachePolicy(qint64(m_cacheBudget->value())*1024*1024,m_cacheEviction->isChecked()); m_scene->requestRedraw(); };
     connect(m_cacheEviction,&QCheckBox::toggled,this,policy); connect(m_cacheBudget,qOverload<int>(&QSpinBox::valueChanged),this,policy);
@@ -246,17 +246,17 @@ void DebugWindow::refresh() {
     if(!memoryTimer.isValid() || memoryTimer.elapsed()>=1000) { process=processMemory(); memoryTimer.restart(); }
     QString memoryText;
     if(process.valid) {
-        memoryText=QStringLiteral("\u8fdb\u7a0b\u5de5\u4f5c\u96c6 %1\n\u79c1\u6709\u5de5\u4f5c\u96c6 %2 / \u79c1\u6709\u63d0\u4ea4 %3")
+        memoryText=QStringLiteral("进程工作集 %1\n私有工作集 %2 / 私有提交 %3")
             .arg(bytesText(process.workingSet),process.privateWorkingSetValid?bytesText(process.privateWorkingSet):QStringLiteral("N/A"),bytesText(process.privateCommit));
     }
     if(m_scene->tiled()) {
         const auto memory=m_scene->tileStats();
-        memoryText+=QStringLiteral("\nCPU \u74e6\u7247\u7f13\u5b58\u4f30\u7b97 %1\nGPU \u74e6\u7247\u6570\u636e\u4f30\u7b97 %2\n\u540e\u53f0\u8f6c\u6362\u5df2\u77e5\u6570\u636e\u4f30\u7b97 %3\uff08\u8bfb\u53d6\u4e2d %4\uff09\n\u7f13\u5b58\u9884\u7b97\u8ba1\u8d39 %5 / %6")
+        memoryText+=QStringLiteral("\nCPU 瓦片缓存估算 %1\nGPU 瓦片数据估算 %2\n后台转换已知数据估算 %3（读取中 %4）\n缓存预算计费 %5 / %6")
             .arg(bytesText(memory.cpuBytes),bytesText(memory.gpuBytes),bytesText(memory.backgroundBytes)).arg(memory.readingJobs)
             .arg(bytesText(memory.bytes),bytesText(m_scene->tileBudgetBytes()));
     }
     m_memoryLabel->setText(memoryText);
-    m_memoryLabel->setToolTip(QStringLiteral("\u79c1\u6709\u5de5\u4f5c\u96c6\u5bf9\u7167\u4efb\u52a1\u7ba1\u7406\u5668\u7684\u8fdb\u7a0b\u5185\u5b58\u5217\uff0c\u6bcf\u79d2\u91c7\u6837\u3002\u8d44\u6e90\u4f30\u7b97\u4e0d\u7b49\u4e8e\u8fdb\u7a0b\u603b\u5360\u7528\uff0c\u4e0d\u80fd\u4e0e\u5de5\u4f5c\u96c6\u76f4\u63a5\u76f8\u52a0\u3002OSG \u8bfb\u53d6\u5185\u90e8\u3001\u5206\u914d\u5668\u548c\u9a71\u52a8\u5f00\u9500\u4e0d\u80fd\u7cbe\u786e\u5f52\u5c5e\u5230\u4e00\u4e2a\u74e6\u7247\u3002"));
+    m_memoryLabel->setToolTip(QStringLiteral("私有工作集对照任务管理器的进程内存列，每秒采样。资源估算不等于进程总占用，不能与工作集直接相加。OSG 读取内部、分配器和驱动开销不能精确归属到一个瓦片。"));
     { QSignalBlocker blocker(m_upAxis); m_upAxis->setCurrentIndex(int(m_scene->cameraController().camera().upAxis())); }
     refreshSubMeshes();
     refreshTileLevels();
@@ -384,7 +384,7 @@ void DebugWindow::refreshTileLevels() {
         for(int column:{1,2}) {
             auto* spin=new QDoubleSpinBox(m_levels); spin->setRange(0,1e30); spin->setDecimals(2); spin->setSingleStep(100);
             spin->setKeyboardTracking(false); spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-            spin->setToolTip(QStringLiteral("\u6700\u8fdc 1e30 \u8868\u793a\u65e0\u9650\uff1b\u8303\u56f4\u4e3a [\u6700\u8fd1, \u6700\u8fdc)\u3002"));
+            spin->setToolTip(QStringLiteral("最远 1e30 表示无限；范围为 [最近, 最远)。"));
             m_levels->setCellWidget(row,column,spin);
             connect(spin,&QDoubleSpinBox::editingFinished,this,[this,row] { applyTileLevel(row,true); });
         }
@@ -394,7 +394,7 @@ void DebugWindow::refreshTileLevels() {
         const auto& setting=levels[size_t(row)];
         auto* enabled=m_levels->cellWidget(row,0)->findChild<QCheckBox*>();
         QSignalBlocker blocker(enabled); enabled->setChecked(setting.enabled);
-        enabled->setToolTip(setting.overridden?QStringLiteral("\u81ea\u5b9a\u4e49\u8303\u56f4"):QStringLiteral("\u6587\u4ef6\u539f\u59cb\u8303\u56f4"));
+        enabled->setToolTip(setting.overridden?QStringLiteral("自定义范围"):QStringLiteral("文件原始范围"));
         for(int column:{1,2}) {
             auto* spin=qobject_cast<QDoubleSpinBox*>(m_levels->cellWidget(row,column));
             if(!spin->hasFocus()) { QSignalBlocker block(spin); spin->setValue(std::min(1e30,double(column==1?setting.minRange:setting.maxRange))); }

@@ -17,6 +17,7 @@
 #include <QMetaObject>
 #include <QThread>
 #include <cstring>
+#include <utility>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -201,6 +202,7 @@ class VKRenderer::State final : public QVulkanWindowRenderer {
             }
 
         void initSwapChainResources() override {
+            m_window->changes().drawOptions=false;
             createSingleSampleTargets();
             createPickTarget();
             createPipeline();
@@ -210,7 +212,6 @@ class VKRenderer::State final : public QVulkanWindowRenderer {
                 if (m_singleSamplePass) createOverlayPipeline(true);
                     createOverlayPipeline(false, true);
                     if (m_singleSamplePass) createOverlayPipeline(true, true);
-                        m_pipelineRevision = m_window->pipelineRevision();
                         }
 
     void releaseSwapChainResources() override {
@@ -250,6 +251,8 @@ class VKRenderer::State final : public QVulkanWindowRenderer {
     void startNextFrame() override {
             m_window->updateTiles();
             createMeshBuffers();
+            if (m_window->hasMesh() && std::exchange(m_window->changes().textures,false))
+                if(!rebuildTextures()) m_window->changes().textures=true;
             if(m_window->tiled()) syncTiles();
             if (m_uniformImageCount && m_uniformImageCount != m_window->swapChainImageCount()) {
                 m_df->vkDeviceWaitIdle(m_device);
@@ -257,8 +260,13 @@ class VKRenderer::State final : public QVulkanWindowRenderer {
                     if (!createMeshDescriptors()) qWarning() << "Vulkan descriptors could not be resized for swapchain";
                     updateResourceStats();
                     }
-            if (m_uploadedGridRevision != m_window->gridRevision()) rebuildGrid();
-            if (m_pipelineRevision != m_window->pipelineRevision()) {
+            const bool grid=std::exchange(m_window->changes().grid,false);
+            const bool bounds=std::exchange(m_window->changes().tileBounds,false);
+            if(grid || bounds) rebuildGrid();
+            // Object uniforms and the static gizmo are already refreshed by the frame path.
+            m_window->changes().gizmo=false;
+            m_window->changes().objects.clear();
+            if (std::exchange(m_window->changes().drawOptions,false)) {
                 m_df->vkDeviceWaitIdle(m_device);
                     destroyPipeline();
                     createPipeline();
@@ -268,10 +276,7 @@ class VKRenderer::State final : public QVulkanWindowRenderer {
                     if (m_singleSamplePass) createOverlayPipeline(true);
                     createOverlayPipeline(false, true);
                     if (m_singleSamplePass) createOverlayPipeline(true, true);
-                    m_pipelineRevision = m_window->pipelineRevision();
                     }
-            if (m_window->hasMesh() && m_uploadedTextureRevision != m_window->textureRevision())
-            rebuildTextures();
             QPoint pickPosition;
             if (m_window->takePendingPick(pickPosition)) {
                 const int index = pickAt(pickPosition);
@@ -452,7 +457,9 @@ class VKRenderer::State final : public QVulkanWindowRenderer {
             m_df->vkCmdEndRenderPass(cmd);
             m_window->recordFrame(drawCalls);
             m_window->frameReady();
-            if(m_window->needsTileRedraw() && !m_window->options().fixedFps) m_window->requestUpdate();
+            const auto& changes=m_window->changes();
+            const bool retry=m_window->hasMesh() && (changes.mesh || changes.textures);
+            if((m_window->needsTileRedraw() || retry) && !m_window->options().fixedFps) m_window->requestUpdate();
             }
 
 private:
@@ -553,7 +560,6 @@ private:
                                                       vertices.data(), m_gridBuffer, m_gridMemory, &m_gridAllocation))
                     m_gridVertexCount = uint32_t(vertices.size());
                 }
-            m_uploadedGridRevision = m_window->gridRevision();
             }
 
         void destroyTexture(TextureResource& texture) {
@@ -1256,7 +1262,7 @@ private:
             }
 
         void createMeshBuffers() {
-            if (!m_df || m_uploadedRevision == m_window->meshRevision()) return;
+            if (!m_df || !std::exchange(m_window->changes().mesh,false)) return;
             m_renderer.m_drawOrderDirty = true;
             m_df->vkDeviceWaitIdle(m_device);
             destroyMeshDescriptors();
@@ -1275,17 +1281,14 @@ private:
             m_uploadedIndexCount = 0;
             m_uploadedVertexCount = 0;
             if (!m_window->hasMesh()) {
-                m_uploadedRevision = m_window->meshRevision();
-                m_uploadedGridRevision = m_window->gridRevision();
                 m_window->setResourceStats(m_overlayAllocation + m_pick.readbackAllocation, 0, 0, 0, 0,
                                            int(bool(m_overlayBuffer)) + int(bool(m_pick.readback)));
                 return;
                 }
             const Mesh& mesh = m_window->mesh();
-            rebuildGrid();
+            m_window->changes().grid=true;
             if(m_window->tiled()) {
-                m_uploadedRevision=m_window->meshRevision();
-                m_window->meshUploadFinished();
+                m_window->finishUpload();
                 return;
                 }
             std::vector<Vertex> vertices;
@@ -1327,7 +1330,7 @@ private:
                 destroyBuffer(m_vertexBuffer, m_vertexMemory);
                 destroyBuffer(m_indexBuffer, m_indexMemory);
                 m_ranges.clear();
-                if(vertices.empty() || indices.empty()) m_uploadedRevision=m_window->meshRevision();
+                if(!vertices.empty() && !indices.empty()) m_window->changes().mesh=true;
                 return;
                 }
             if (!m_whiteTexture.view) {
@@ -1335,11 +1338,12 @@ private:
                 m_whiteTexture.source.fill(Qt::white);
                 if (!uploadTexture(m_whiteTexture)) {
                     qWarning() << "Vulkan fallback texture creation failed";
+                    m_window->changes().mesh=true;
                     return;
                     }
                 }
-            rebuildTextures();
-            m_uploadedRevision = m_window->meshRevision();
+            m_window->changes().textures=false;
+            if(!rebuildTextures()) m_window->changes().textures=true;
             m_uploadedVertexCount = int(vertices.size());
             m_uploadedIndexCount = int(indices.size());
             m_reportedDrawFailure = false;
@@ -1347,15 +1351,15 @@ private:
                     << "indices=" << m_uploadedIndexCount << "ranges=" << m_ranges.size();
             // Vulkan 缓冲已经建立，释放 CPU 顶点和索引；场景元数据仍然保留。
             m_window->mesh().releaseGeometry();
-            m_window->meshUploadFinished();
+            m_window->finishUpload();
             }
 
-        void rebuildTextures() {
+        bool rebuildTextures() {
             m_df->vkDeviceWaitIdle(m_device);
             destroyMeshDescriptors();
             destroyTextures();
             destroyTexture(m_whiteTexture);
-            if(!uploadTexture(m_whiteTexture)) return;
+            if(!uploadTexture(m_whiteTexture)) return false;
             bool uploaded = true;
             for (DrawRange& range : m_ranges)
                 for (TextureResource* texture : {
@@ -1363,9 +1367,9 @@ private:
                         })
                     if (!texture->source.isNull() && !uploadTexture(*texture)) uploaded = false;
             if (!uploaded) qWarning() << "One or more Vulkan textures could not be uploaded";
-            if (!createMeshDescriptors()) qWarning() << "Vulkan model descriptors unavailable";
-            m_uploadedTextureRevision = m_window->textureRevision();
+            if (!createMeshDescriptors()) { qWarning() << "Vulkan model descriptors unavailable"; uploaded=false; }
             updateResourceStats();
+            return uploaded;
             }
 
         void updateResourceStats() {
@@ -1644,10 +1648,8 @@ private:
         VkDeviceMemory m_gridMemory = VK_NULL_HANDLE;
         uint32_t m_gridVertexCount = 0;
         VkDeviceSize m_gridAllocation = 0;
-        uint64_t m_uploadedGridRevision = UINT64_MAX;
         uint32_t m_arrowVertexCount = 0, m_ringVertexCount = 0, m_scaleVertexCount = 0;
         VkDeviceSize m_overlayAllocation = 0;
-        uint64_t m_pipelineRevision = 0;
         bool m_wireframeSupported = false;
         VkDescriptorSetLayout m_descriptorLayout = VK_NULL_HANDLE;
         VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
@@ -1658,11 +1660,9 @@ private:
         int m_uniformImageCount = 0;
         TextureResource m_whiteTexture;
         std::map<qint64,std::pair<TextureResource,int>> m_sharedTextures;
-        uint64_t m_uploadedTextureRevision = 0;
         QVector<DrawRange> m_ranges;
         size_t m_tileCapacity=256;
         std::vector<VkDescriptorSet> m_tileSets;
-        uint64_t m_uploadedRevision = 0;
         int m_uploadedIndexCount = 0;
         int m_uploadedVertexCount = 0;
         bool m_reportedDrawFailure = false;

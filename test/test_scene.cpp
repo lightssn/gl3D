@@ -2,21 +2,30 @@
 #include "tilenode.h"
 #include <QTimer>
 #include <gtest/gtest.h>
+#include <utility>
 
 namespace {
 class TestView : public Scene {
 public:
     QTimer timer;
-    int redraws=0, transforms=0, pipelines=0, overlays=0, selections=0;
+    int redraws=0, selections=0;
     bool undoEnabled=false, redoEnabled=false;
+    int loadsStarted=0, loadsFinished=0, inputsReset=0;
+    std::vector<int> progress;
+    QString loadedInfo, loadError, unavailable;
+
     RenderBackend backend() const override { return RenderBackend::OpenGL; }
     DebugSnapshot debugSnapshot() override { return {}; }
     void requestRedraw() override { ++redraws; invalidateTiles(); }
 protected:
+    void notifyLoadStarted() override { ++loadsStarted; }
+    void notifyLoadProgress(int percent) override { progress.push_back(percent); }
+    void notifyMeshLoaded(const QString& info) override { loadedInfo=info; }
+    void notifyLoadFailed(const QString& error) override { loadError=error; }
+    void notifyLoadFinished() override { ++loadsFinished; }
+    void resetInputState() override { ++inputsReset; }
+    QString meshAvailabilityError() const override { return unavailable; }
     QTimer* redrawTimer() override { return &timer; }
-    void transformsChanged() override { ++transforms; }
-    void pipelineOptionsChanged() override { ++pipelines; }
-    void overlaysChanged() override { ++overlays; }
     void notifyHistoryChanged(bool undo,bool redo) override { undoEnabled=undo; redoEnabled=redo; }
     void notifySelectionChanged(int,bool changed) override { if(changed) ++selections; }
 };
@@ -88,11 +97,11 @@ TEST(Scene, TileOwnersShareEditsAndUndoAcrossGeometrySlots) {
     EXPECT_FALSE(view.options().pbr); EXPECT_FALSE(view.options().normalMap);
 }
 
-TEST(Scene, CommonOptionsInvokeBackendHooksAndTimer) {
+TEST(Scene, CommonOptionsMarkChangesAndUpdateTimer) {
     TestView view; view.setMesh(ordinaryMesh());
     view.setWireframe(true); view.setDepthTest(false); view.setFaceCulling(true);
-    EXPECT_EQ(view.pipelines,3);
-    view.setUpAxis(UpAxis::Z); view.setTileBounds(true); EXPECT_EQ(view.overlays,2);
+    EXPECT_TRUE(view.changes().drawOptions);
+    view.setUpAxis(UpAxis::Z); view.setTileBounds(true); EXPECT_TRUE(view.changes().grid);
     view.setOrtho(true); EXPECT_TRUE(view.cameraController().camera().ortho());
     view.setPbr(true); view.setNormalMap(false); view.setDebugView(10); view.setOutlineWidth(-1);
     EXPECT_TRUE(view.options().pbr); EXPECT_FALSE(view.options().normalMap);
@@ -155,4 +164,111 @@ TEST(Scene, TileDisplayCacheFollowsTransformVisibilityAndReplacement) {
     scene.clear(); EXPECT_TRUE(scene.tileBoundsLines().empty());
     scene.setMesh(ordinaryMesh());
     EXPECT_EQ(scene.tileRepresentative(1),1); EXPECT_TRUE(scene.tileBoundsLines().empty());
+}
+
+TEST(Scene, SharedChangesCoalesceAndKeepIndependentWork) {
+    Scene scene; scene.setMesh(ordinaryMesh());
+    EXPECT_TRUE(scene.changes().mesh);
+    scene.changes()={};
+    scene.setAntialiasing(false);
+    EXPECT_FALSE(scene.changes().drawOptions);
+    scene.setMipmaps(true); scene.setMipmaps(false);
+    scene.setWireframe(true); scene.setDepthTest(false);
+    scene.setClearColor(0.2f,0.3f,0.4f); scene.setUpAxis(UpAxis::Z);
+    EXPECT_TRUE(scene.changes().textures);
+    EXPECT_TRUE(scene.changes().drawOptions);
+    EXPECT_TRUE(scene.changes().grid);
+    EXPECT_FALSE(scene.changes().mesh);
+    EXPECT_TRUE(std::exchange(scene.changes().textures,false));
+    EXPECT_FALSE(scene.changes().textures);
+    EXPECT_TRUE(scene.changes().grid);
+    scene.setMipmaps(true);
+    EXPECT_TRUE(scene.changes().textures);
+    scene.selectSubMesh(0); scene.beginEdit(); scene.editor().current().position={1,2,3};
+    scene.finishEdit(EditController::ChangePolicy::ComponentTolerance);
+    scene.selectSubMesh(-1);
+    scene.setSubMeshVisible(1,false);
+    const auto objects=std::exchange(scene.changes().objects,{});
+    EXPECT_EQ(objects,(std::set<int>{0,1}));
+    EXPECT_TRUE(scene.changes().objects.empty());
+    scene.setSubMeshVisible(0,false);
+    EXPECT_EQ(scene.changes().objects,(std::set<int>{0}));
+    scene.clear();
+    EXPECT_TRUE(scene.changes().mesh); EXPECT_TRUE(scene.changes().tileBounds);
+    EXPECT_TRUE(scene.changes().objects.empty());
+    scene.setMesh(ordinaryMesh());
+    EXPECT_TRUE(scene.changes().mesh); EXPECT_TRUE(scene.changes().grid);
+}
+
+TEST(Scene, LoadStagesSeparateReadingFromUploadAndMoveGeometry) {
+    TestView view;
+    EXPECT_FALSE(view.beginLoad({}));
+    ASSERT_TRUE(view.beginLoad({QStringLiteral("keyboard.glb")}));
+    EXPECT_TRUE(view.isLoading()); EXPECT_EQ(view.loadsStarted,1);
+    EXPECT_FALSE(view.beginLoad({QStringLiteral("another.glb")}));
+    view.finishUpload(); EXPECT_TRUE(view.isLoading()); EXPECT_EQ(view.loadsFinished,0);
+    view.reportLoadProgress(50); EXPECT_EQ(view.progress.back(),45);
+    auto loaded=std::make_shared<Mesh>(ordinaryMesh());
+    const auto* vertices=loaded->subMeshes[0].vertices.data();
+    view.acceptLoadResult(true,{},loaded);
+    EXPECT_TRUE(view.isLoading()); EXPECT_EQ(view.progress.back(),90);
+    EXPECT_EQ(view.mesh().subMeshes[0].vertices.data(),vertices);
+    EXPECT_TRUE(loaded->subMeshes.empty());
+    EXPECT_TRUE(view.loadedInfo.startsWith(QStringLiteral("keyboard.glb")));
+    EXPECT_EQ(view.sourcePath(),QStringLiteral("keyboard.glb"));
+    EXPECT_EQ(view.loadsFinished,0); EXPECT_EQ(view.inputsReset,1);
+    view.reportLoadProgress(30); EXPECT_EQ(view.progress.back(),90);
+    view.finishUpload(); EXPECT_FALSE(view.isLoading());
+    EXPECT_EQ(view.progress.back(),100); EXPECT_EQ(view.loadsFinished,1);
+    view.finishUpload(); EXPECT_EQ(view.loadsFinished,1);
+}
+
+TEST(Scene, FailedOrUnavailableLoadPreservesExistingMesh) {
+    TestView view; view.setMesh(ordinaryMesh(),QStringLiteral("old.glb"));
+    ASSERT_TRUE(view.beginLoad({QStringLiteral("missing.glb")}));
+    view.acceptLoadResult(false,QStringLiteral("missing"),{});
+    EXPECT_FALSE(view.isLoading()); EXPECT_EQ(view.loadError,QStringLiteral("missing"));
+    EXPECT_EQ(view.sourcePath(),QStringLiteral("old.glb")); EXPECT_EQ(view.subMeshCount(),2);
+    ASSERT_TRUE(view.beginLoad({QStringLiteral("new.glb")}));
+    view.unavailable=QStringLiteral("context unavailable");
+    auto loaded=std::make_shared<Mesh>(ordinaryMesh());
+    view.acceptLoadResult(true,{},loaded);
+    EXPECT_FALSE(view.isLoading()); EXPECT_EQ(view.loadError,view.unavailable);
+    EXPECT_EQ(view.sourcePath(),QStringLiteral("old.glb"));
+    EXPECT_EQ(loaded->subMeshes.size(),2u); EXPECT_EQ(view.loadsFinished,2);
+    view.unavailable.clear();
+    ASSERT_TRUE(view.beginLoad({QStringLiteral("null.glb")}));
+    view.acceptLoadResult(true,{},{});
+    EXPECT_FALSE(view.isLoading()); EXPECT_FALSE(view.loadError.isEmpty());
+}
+
+TEST(Scene, ClearDiscardsLateReadAndCancelsPendingUpload) {
+    TestView view;
+    ASSERT_TRUE(view.beginLoad({QStringLiteral("old.glb")}));
+    view.clear(); EXPECT_FALSE(view.isLoading()); EXPECT_EQ(view.loadsFinished,1);
+    EXPECT_FALSE(view.beginLoad({QStringLiteral("new.glb")}));
+    view.acceptLoadResult(true,{},std::make_shared<Mesh>(ordinaryMesh()));
+    EXPECT_FALSE(view.hasMesh()); EXPECT_EQ(view.loadsFinished,1);
+    ASSERT_TRUE(view.beginLoad({QStringLiteral("new.glb")}));
+    view.acceptLoadResult(true,{},std::make_shared<Mesh>(ordinaryMesh()));
+    EXPECT_TRUE(view.isLoading()); EXPECT_TRUE(view.hasMesh());
+    view.clear(); view.finishUpload();
+    EXPECT_FALSE(view.isLoading()); EXPECT_FALSE(view.hasMesh());
+    EXPECT_EQ(view.loadsFinished,2);
+}
+
+TEST(Scene, DirectSetMeshAppliesDefaultsAndResetsEditingNotifications) {
+    TestView view; view.setMesh(ordinaryMesh());
+    view.selectSubMesh(0); view.beginEdit(); view.editor().current().position={1,0,0};
+    view.finishEdit(EditController::ChangePolicy::ComponentTolerance);
+    EXPECT_TRUE(view.undoEnabled);
+    view.options().pbr=true; view.options().normalMap=true; view.options().outlineWidth=42;
+    Mesh mesh=ordinaryMesh();
+    mesh.tileRoot=std::make_shared<TileNode>(); mesh.tileRoot->owner=42; mesh.tileRoot->radius=2;
+    mesh.tileRoot->geometry=std::move(mesh.subMeshes);
+    view.setMesh(std::move(mesh));
+    EXPECT_FALSE(view.options().pbr); EXPECT_FALSE(view.options().normalMap);
+    EXPECT_EQ(view.options().outlineWidth,RenderOptions{}.outlineWidth);
+    EXPECT_EQ(view.selectedSubMesh(),-1); EXPECT_FALSE(view.undoEnabled); EXPECT_FALSE(view.redoEnabled);
+    EXPECT_FALSE(view.isLoading()); EXPECT_EQ(view.loadsStarted,0);
 }

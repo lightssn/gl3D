@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <numeric>
 #include <set>
+#include <utility>
 
 static const float kPi = 3.14159265f;
 
@@ -81,7 +82,7 @@ void GLWindow::initializeGL() {
     gl.glEnable(GL_DEPTH_TEST);
     gl.glDisable(GL_CULL_FACE); //叶片等薄片需双面可见
     gl.glEnable(GL_STENCIL_TEST); //选中描边依赖stencil
-    gl.glEnable(GL_MULTISAMPLE);
+    options().antialiasing ? gl.glEnable(GL_MULTISAMPLE) : gl.glDisable(GL_MULTISAMPLE);
     gl.glClearColor(options().clearColor[0], options().clearColor[1], options().clearColor[2], 1.0f);
     m_dpr = devicePixelRatioF();
     printf("[GLWindow] %s\n", (const char*)gl.glGetString(GL_RENDERER));
@@ -94,14 +95,16 @@ void GLWindow::initializeGL() {
     m_overlayShader->loadFromCombinedFile(shaderDir + "overlay.glsl");
     m_renderer = std::make_unique<GLRenderer>();
     m_renderer->setMipmapsEnabled(Scene::options().mipmaps);
+    changes().grid=true;
+    changes().gizmo=true;
+    changes().tileBounds=true;
 
     buildAxesMesh();
     createPickTarget(std::max((int)(width() * m_dpr), 1), std::max((int)(height() * m_dpr), 1));
 
-    //构造函数期间收到过加载请求 此时补传显存
+    // Restore retained geometry at the next draw.
     if (!mesh().subMeshes.empty() && mesh().vertexCount() > 0) {
-        if(Scene::tiled()) m_renderer->clear(); else m_renderer->upload(mesh());
-        refreshOverlays();
+        changes().mesh=true;
         }
     // The CLI may request a model before the window's first initialization.
     if(!m_pendingLoadPaths.isEmpty()) QTimer::singleShot(0,this,[this] {
@@ -124,8 +127,11 @@ void GLWindow::resizeGL(int w, int h) {
 void GLWindow::paintGL() {
     auto& gl = GLFunctions::instance();
     m_frameDrawCalls = 0;
+    syncResources();
+    options().antialiasing ? gl.glEnable(GL_MULTISAMPLE) : gl.glDisable(GL_MULTISAMPLE);
     options().depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
     options().faceCulling ? gl.glEnable(GL_CULL_FACE) : gl.glDisable(GL_CULL_FACE);
+    changes().drawOptions=false;
     const qint64 frameElapsed = m_frameTimer.restart();
     if (frameElapsed > 0) {
         m_frameTimesMs.push_back((float)frameElapsed);
@@ -151,7 +157,6 @@ void GLWindow::paintGL() {
         if(!options().fixedFps && Scene::needsTileRedraw()) update();
     }
     if (!m_shader || !m_shader->isValid() || !hasMesh()) { m_lastDrawCalls = 0; m_idleFpsTimer->start(1000); return; }
-    if(m_gizmoDirty) { rebuildGizmo(); m_gizmoDirty=false; }
 
     const RenderFrame frame = makeRenderFrame(*this, QSize(width(), height()));
     const QMatrix4x4& view = frame.view;
@@ -362,19 +367,42 @@ void GLWindow::rebuildGizmo() {
     uploadOverlay(m_gizmoMesh, verts);
     }
 
-void GLWindow::refreshOverlays() {
-    rebuildGrid();
-    if (editor().mode != None) rebuildGizmo();
+void GLWindow::syncObjects() {
+    if(!m_renderer) return;
+    const auto objects=std::exchange(changes().objects,{});
+    if(!tiled()) for(int index:objects) {
+        m_renderer->setSubMeshVisible(index,objectVisible(index));
+        m_renderer->setSubMeshTransform(index,objectTransform(index));
     }
+}
+
+// Called with the rendering context current; event handlers only invalidate state.
+void GLWindow::syncResources() {
+    if(!m_renderer) return;
+    if(std::exchange(changes().mesh,false)) {
+        // Clear old resources before applying texture options to the new mesh.
+        m_renderer->clear();
+        m_renderer->setMipmapsEnabled(options().mipmaps);
+        if(!tiled()) m_renderer->upload(mesh());
+        changes().textures=false;
+        if(!tiled()) mesh().releaseGeometry();
+        finishUpload();
+    }
+    if(std::exchange(changes().textures,false)) {
+        m_renderer->setMipmapsEnabled(options().mipmaps);
+    }
+    syncObjects();
+    if(std::exchange(changes().grid,false)) rebuildGrid();
+    if(std::exchange(changes().gizmo,false)) rebuildGizmo();
+}
 
 void GLWindow::syncTileBounds() {
-    if(m_tileBoundsRevision==Scene::tileBoundsRevision()) return;
+    if(!std::exchange(changes().tileBounds,false)) return;
     std::vector<OverlayVertex> vertices;
     const auto& lines=Scene::tileBoundsLines();
     const QVector3D color(1.0f,0.7f,0.12f);
     for(size_t i=0;i+1<lines.size();i+=2) pushLine(vertices,lines[i],lines[i+1],color);
     uploadOverlay(m_tileBoundsMesh,vertices);
-    m_tileBoundsRevision=Scene::tileBoundsRevision();
 }
 
 //网格/坐标轴/操作器几何统一上传 交错pos3+color3
@@ -507,11 +535,12 @@ void GLWindow::createPickTarget(int w, int h) {
 //左键拾取 模型渲染为纯红 读取点击处像素判断命中
 //鼠标事件中GL上下文非当前 须makeCurrent后再操作
 void GLWindow::pickAt(const QPoint& pos) {
-    if (!hasMesh() || !isValid()) {
+    if (!hasMesh() || !isValid() || changes().mesh || !m_renderer) {
         update();
         return;
         }
     bool hit = false;
+    syncObjects();
     makeCurrent(); //Qt6返回void 直接使上下文当前
     auto& gl = GLFunctions::instance();
     // 侧栏布局变化后拾取目标可能为空或尺寸过期，点击时按实际视口重建。
@@ -572,7 +601,7 @@ void GLWindow::pickAt(const QPoint& pos) {
 
 
 bool GLWindow::loadMeshAsync(const QStringList& paths) {
-    if (m_loading) return false; //加载进行中 忽略重复请求
+    if (isLoading()) return false; //加载进行中 忽略重复请求
     if (!isValid() || !m_renderer) {
         if(!m_renderer) {
             m_pendingLoadPaths=paths;
@@ -587,60 +616,22 @@ bool GLWindow::loadMeshAsync(const QStringList& paths) {
         m_loadThread = new QThread(this);
         m_loadWorker = new MeshLoader;
         m_loadWorker->moveToThread(m_loadThread);
-        connect(m_loadWorker, &MeshLoader::progress, this, [this](int percent) { emit progressChanged(percent); });
-        connect(m_loadWorker, &MeshLoader::finished, this, &GLWindow::onLoadFinished);
+        connect(m_loadWorker, &MeshLoader::progress, this, [this](int percent) { reportLoadProgress(percent); });
+        connect(m_loadWorker, &MeshLoader::finished, this,
+            [this](bool ok,const QString& error,std::shared_ptr<Mesh> mesh) {
+                acceptLoadResult(ok,error,std::move(mesh));
+            });
         m_loadThread->start();
         }
-    m_loading = true;
-    m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
-    emit loadStarted(); //主窗口显示进度条
-    //解析交后台线程 完成回调onLoadFinished 不做GPU上传与取景
+    if(!beginLoad(paths)) return false;
     QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection, Q_ARG(QStringList, paths));
     return true;
     }
 
-//后台解析完成回调(主线程) 成功则上传显存+取景+发modelLoaded 失败发loadFailed
-void GLWindow::onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> loadedMesh) {
-    m_loading = false;
-    if (!ok || !loadedMesh) {
-        emit loadFailed(err.isEmpty() ? "加载失败" : err);
-        emit loadFinished();
-        update();
-        return;
-        }
-    if (!isValid() || !m_renderer) {
-        emit loadUnavailable(QStringLiteral("OpenGL 上下文不可用，未上传模型，请稍后重新打开。"));
-        emit loadFinished();
-        return;
-        }
-    Scene::setMesh(std::move(*loadedMesh), m_currentPath);
-    m_tileBoundsRevision=~uint64_t(0);
-    if(Scene::tiled()) { options().pbr=false; options().normalMap=false; }
-    makeCurrent();
-    if(Scene::tiled()) m_renderer->clear(); else m_renderer->upload(mesh());
-    refreshOverlays();
-    doneCurrent();
-    cameraController().camera().fitToSphere(mesh().center(), mesh().radius());
-    options().outlineWidth = RenderOptions{}.outlineWidth;
-    m_dragAxis = 0;
-    emit historyChanged(false, false);
-    updateMeshMatrix();
-    selection().indexRef() = -1;
-    emit selectionChanged(false); //新模型默认未选中 操作器按钮隐藏
+QString GLWindow::meshAvailabilityError() const {
+    return isValid() && m_renderer ? QString() : QStringLiteral("OpenGL 上下文不可用，未上传模型，请稍后重新打开。");
+}
 
-    QString info = QString("%1  顶点%2  三角%3  子网格%4")
-                   .arg(QFileInfo(m_currentPath).fileName())
-                   .arg(mesh().vertexCount())
-                   .arg(mesh().triangleCount())
-                   .arg((int)mesh().subMeshes.size());
-    emit meshLoaded(info);
-    // GPU 资源已经上传，CPU 侧只保留材质、纹理、包围盒和统计信息。
-    if(!Scene::tiled()) mesh().releaseGeometry();
-    emit loadFinished();
-    update();
-    }
-
-//清除模型 释放GPU资源 隐藏操作器并复位选中状态
 void GLWindow::deleteMesh() {
     if (!hasMesh() && m_pendingLoadPaths.isEmpty()) return;
     m_pendingLoadPaths.clear();
@@ -653,13 +644,8 @@ void GLWindow::deleteMesh() {
         doneCurrent();
     }
     Scene::clear();
-    m_tileBoundsRevision=~uint64_t(0);
+    changes().mesh=false;
     m_idleFpsTimer->stop();
-    m_dragAxis = 0;
-    editor().mode = None;
-    emit historyChanged(false, false);
-    selection().indexRef() = -1;
-    emit selectionChanged(false); //联动隐藏操作器
     emit meshCleared();
     update();
     }
@@ -667,20 +653,6 @@ void GLWindow::deleteMesh() {
 //组合模型矩阵 T(c+pos)*R*S*T(-c) 绕模型中心缩放旋转 中心跟随位移
 void GLWindow::updateMeshMatrix() {
     Scene::applyTransform(selection().indexRef());
-    transformsChanged();
-}
-
-void GLWindow::transformsChanged() {
-    m_gizmoDirty=true;
-    if(m_renderer && !Scene::tiled() && selection().indexRef()>=0)
-        m_renderer->setSubMeshTransform(selection().indexRef(),Scene::objectTransform(selection().indexRef()));
-}
-
-void GLWindow::visibilityChanged(int index,bool visible) {
-    if(m_renderer && !Scene::tiled()) m_renderer->setSubMeshVisible(index,visible);
-}
-void GLWindow::overlaysChanged() {
-    if(isValid() && m_renderer) { makeCurrent(); rebuildGrid(); doneCurrent(); }
 }
 
 //由屏幕坐标生成拾取射线 正交时视口平移 透视时从眼位出发
@@ -1017,15 +989,4 @@ void GLWindow::pushAxisArrow(std::vector<OverlayVertex>& out, QVector3D axis,
     pushCone(out, coneBase, d, len * 0.28f, len * 0.055f, color);
     }
 
-void GLWindow::transformModeChanged() { m_dragAxis=0; m_gizmoDirty=true; }
-void GLWindow::antialiasingChanged() {
-    if(isValid() && m_renderer) {
-        makeCurrent();
-        auto& gl=GLFunctions::instance();
-        Scene::options().antialiasing?gl.glEnable(GL_MULTISAMPLE):gl.glDisable(GL_MULTISAMPLE);
-        doneCurrent();
-    }
-}
-void GLWindow::mipmapsChanged(bool enabled) {
-    if(isValid() && m_renderer) { makeCurrent(); m_renderer->setMipmapsEnabled(enabled); doneCurrent(); }
-}
+void GLWindow::transformModeChanged() { m_dragAxis=0; }

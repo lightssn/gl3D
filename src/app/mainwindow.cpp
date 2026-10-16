@@ -45,7 +45,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_toolBar = addToolBar("主工具栏");
     m_toolBar->setMovable(false);
     QAction* actOpen = m_toolBar->addAction("打开模型");
-    m_actClear=m_toolBar->addAction(QStringLiteral("\u6e05\u7a7a"));
+    m_actClear=m_toolBar->addAction(QStringLiteral("清空"));
     m_actClear->setEnabled(false);
     connect(m_actClear,&QAction::triggered,this,&MainWindow::clearScene);
     QAction* actReset = m_toolBar->addAction("复位视角");
@@ -439,7 +439,7 @@ void MainWindow::clearScene() {
     m_curTransform=nullptr;
     for(QAction* action:{m_actMove,m_actRot,m_actScale}) action->setVisible(false);
     m_modelOpen=false;
-    m_modelInfo->setText(QStringLiteral("\u672a\u52a0\u8f7d\u6a21\u578b"));
+    m_modelInfo->setText(QStringLiteral("未加载模型"));
     m_loadProgress->setVisible(false);
     m_fpsLabel->clear();
     updateBackendUi();

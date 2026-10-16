@@ -25,10 +25,6 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public Scene {
             return m_ready;
             }
         bool loadMeshAsync(const QStringList& paths);
-        bool isLoading() const {
-            return m_loading;
-            }
-        void meshUploadFinished();
         void updateTiles();
         void clearMesh();
 
@@ -52,18 +48,6 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public Scene {
                               qint64 textureCpuBytes, int textureCount, int bufferCount);
         void setFramebufferStats(qint64 bytes, int ownedCount);
         void setDeviceDescription(const QString& name, const QString& version);
-        uint64_t meshRevision() const {
-            return m_modelRevision;
-            }
-        uint64_t textureRevision() const {
-            return m_textureRevision;
-            }
-        uint64_t pipelineRevision() const {
-            return m_pipelineRevision;
-            }
-        uint64_t gridRevision() const {
-            return m_gridRevision;
-            }
 
         bool multisamplingAvailable() const {
             return m_multisamplingAvailable;
@@ -94,14 +78,8 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public Scene {
 
     private:
         bool m_ready = false;
-        bool m_loading = false;
         QThread* m_loadThread = nullptr;
         MeshLoader* m_loadWorker = nullptr;
-        QString m_currentPath;
-        uint64_t m_modelRevision = 0;
-        uint64_t m_textureRevision = 0;
-        uint64_t m_pipelineRevision = 0;
-        uint64_t m_gridRevision = 0;
         bool m_multisamplingAvailable = false;
         using TransformState = EditTransform;
 
@@ -124,16 +102,20 @@ class GL3D_EXPORT VKWindow final : public QVulkanWindow, public Scene {
         int m_textureCount = 0, m_bufferCount = 0, m_ownedFramebufferCount = 0;
         QString m_deviceName, m_apiVersion;
         void transformModeChanged() override { m_dragAxis=0; }
-        void mipmapsChanged(bool) override { ++m_textureRevision; }
         QTimer* redrawTimer() override { return &m_renderTimer; }
-        void pipelineOptionsChanged() override { ++m_pipelineRevision; }
-        void overlaysChanged() override { ++m_gridRevision; }
+        void notifyLoadStarted() override { emit loadStarted(); }
+        void notifyLoadProgress(int percent) override { emit progressChanged(percent); }
+        void notifyMeshLoaded(const QString& info) override { emit meshLoaded(info); }
+        void notifyLoadFailed(const QString& error) override { emit loadFailed(error); }
+        void notifyLoadFinished() override { emit loadFinished(); }
+        void resetInputState() override {
+            m_dragAxis=0; m_dragButton=Qt::NoButton; m_pendingPick=QPoint(-1,-1);
+        }
         void notifyHistoryChanged(bool undo, bool redo) override { emit historyChanged(undo,redo); }
         void notifySelectionChanged(int index, bool changed) override {
             if(changed) emit selectionChanged(index>=0);
             emit subMeshSelected(index);
         }
-        void onLoadFinished(bool ok, const QString& error, std::shared_ptr<Mesh> mesh);
         int hitGizmo(const QPoint& pos) const;
         QVector3D gizmoAxis(int index) const;
     };

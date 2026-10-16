@@ -48,9 +48,9 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public Scene {
         OverlayMesh m_gridMesh;       //XY平面网格
         OverlayMesh m_axesMesh;       //左下角XYZ轴HUD
         OverlayMesh m_gizmoMesh;      //模型中央操作器
-        bool m_gizmoDirty = false;
+        void syncResources();
+        void syncObjects();
         OverlayMesh m_tileBoundsMesh;
-        uint64_t m_tileBoundsRevision = 0;
 
         //模型变换 T(c+pos)*R*S*T(-c) 绕模型中心旋转缩放 三模式共享
         using TransformState = EditTransform;
@@ -67,9 +67,6 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public Scene {
         QThread* m_loadThread = nullptr;
         QStringList m_pendingLoadPaths;
         MeshLoader* m_loadWorker = nullptr;
-        bool m_loading = false; //加载中 防止重复触发
-        QString m_currentPath;  //当前加载的模型路径 状态栏显示文件名用
-        void onLoadFinished(bool ok, const QString& err, std::shared_ptr<Mesh> loadedMesh);
 
         //离屏拾取FBO 点击处读颜色判断是否命中模型
         unsigned int m_pickFbo = 0, m_pickColor = 0, m_pickDepth = 0;
@@ -106,7 +103,6 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public Scene {
         void buildAxesMesh();
         void rebuildGrid();
         void rebuildGizmo();
-        void refreshOverlays();
         void syncTileBounds();
         void createPickTarget(int w, int h);
         void pickAt(const QPoint& pos);
@@ -118,12 +114,15 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public Scene {
         //操作器拖拽 射线拾取轴/平面交点 组合模型矩阵
         void updateMeshMatrix();
         QTimer* redrawTimer() override { return m_renderTimer; }
-        void transformsChanged() override;
         void transformModeChanged() override;
-        void antialiasingChanged() override;
-        void mipmapsChanged(bool enabled) override;
-        void visibilityChanged(int index, bool visible) override;
-        void overlaysChanged() override;
+        void notifyLoadStarted() override { emit loadStarted(); }
+        void notifyLoadProgress(int percent) override { emit progressChanged(percent); }
+        void notifyMeshLoaded(const QString& info) override { emit meshLoaded(info); }
+        void notifyLoadFailed(const QString& error) override { emit loadFailed(error); }
+        void notifyLoadFinished() override { emit loadFinished(); }
+        QString meshAvailabilityError() const override;
+        void notifyLoadUnavailable(const QString& message) override { emit loadUnavailable(message); }
+        void resetInputState() override { m_dragAxis=0; m_dragButton=Qt::NoButton; }
         void notifyHistoryChanged(bool undo, bool redo) override { emit historyChanged(undo,redo); }
         void notifySelectionChanged(int index, bool changed) override {
             if(changed) emit selectionChanged(index>=0);
@@ -151,7 +150,6 @@ class GL3D_EXPORT GLWindow : public QOpenGLWindow, public Scene {
         bool loadMeshAsync(const QStringList& paths);
 
         void deleteMesh();          //清除当前模型与选中状态
-        bool isLoading() const { return m_loading; }
 
         void requestRedraw() override { Scene::invalidateTiles(); update(); }
 

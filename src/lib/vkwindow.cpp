@@ -55,70 +55,32 @@ VKWindow::~VKWindow() {
     }
 
 bool VKWindow::loadMeshAsync(const QStringList& paths) {
-    if (m_loading) return false;
+    if (isLoading()) return false;
     if (!m_loadThread) {
         qRegisterMetaType<std::shared_ptr<Mesh>>("std::shared_ptr<Mesh>");
         m_loadThread = new QThread(this);
         m_loadWorker = new MeshLoader;
         m_loadWorker->moveToThread(m_loadThread);
-        connect(m_loadWorker, &MeshLoader::progress, this, [this](int percent) {
-            if (m_loading) emit progressChanged(std::min(90, percent * 9 / 10));
+        connect(m_loadWorker, &MeshLoader::progress, this, [this](int percent) { reportLoadProgress(percent); });
+        connect(m_loadWorker, &MeshLoader::finished, this,
+            [this](bool ok,const QString& error,std::shared_ptr<Mesh> mesh) {
+                acceptLoadResult(ok,error,std::move(mesh));
             });
-        connect(m_loadWorker, &MeshLoader::finished, this, &VKWindow::onLoadFinished);
         m_loadThread->start();
         }
-    m_currentPath = paths.size()==1?paths.front():QStringLiteral("OSGB (%1 files)").arg(paths.size());
-    m_loading = true;
-    emit loadStarted();
+    if(!beginLoad(paths)) return false;
     QMetaObject::invokeMethod(m_loadWorker, "load", Qt::QueuedConnection, Q_ARG(QStringList, paths));
     return true;
     }
 
-void VKWindow::onLoadFinished(bool ok, const QString& error, std::shared_ptr<Mesh> mesh) {
-    if (!m_loading) return;
-    if (!ok || !mesh) {
-        m_loading = false;
-        emit loadFailed(error.isEmpty() ? QStringLiteral("加载失败") : error);
-        emit loadFinished();
-        return;
-        }
-    Scene::setMesh(std::move(*mesh), m_currentPath);
-    if(Scene::tiled()) {
-        Scene::options().pbr=false;
-        Scene::options().normalMap=false;
-        }
-    m_pendingPick = QPoint(-1, -1);
-    Scene::options().outlineWidth = RenderOptions{}.outlineWidth;
-    emit selectionChanged(false);
-    emit historyChanged(false, false);
-    ++m_modelRevision;
-    emit meshLoaded(QString("%1  顶点%2  三角%3  子网格%4").arg(QFileInfo(m_currentPath).fileName()).arg(Scene::mesh().vertexCount()).arg(Scene::mesh().triangleCount()).arg(subMeshCount()));
-    requestUpdate();
-    emit progressChanged(90);
-    }
-
-void VKWindow::meshUploadFinished() {
-    if (!m_loading) return;
-    m_loading = false;
-    emit progressChanged(100);
-    emit loadFinished();
-    }
-
 void VKWindow::updateTiles() {
-    const auto boundsRevision=Scene::tileBoundsRevision();
     if(!Scene::tiled()) return;
     Scene::updateTiles(swapChainImageSize());
-    if(boundsRevision!=Scene::tileBoundsRevision()) ++m_gridRevision;
     }
 
 void VKWindow::clearMesh() {
     m_idleFpsTimer.stop();
-    ++m_gridRevision;
     Scene::clear();
-    m_pendingPick = QPoint(-1, -1);
-    emit selectionChanged(false);
-    emit historyChanged(false, false);
-    ++m_modelRevision;
     requestUpdate();
     }
 QVulkanWindowRenderer* VKWindow::createRenderer() {

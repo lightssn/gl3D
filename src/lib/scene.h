@@ -8,6 +8,18 @@
 #include "tilestream.h"
 #include "editcontroller.h"
 #include "debugstats.h"
+#include <set>
+
+// One scene has one active renderer. Only the GUI thread accesses these flags.
+struct SceneChanges {
+    bool mesh = false;
+    bool textures = false;
+    bool drawOptions = false;
+    bool grid = false;
+    bool gizmo = false;
+    bool tileBounds = false;
+    std::set<int> objects;
+};
 
 class QTimer;
 enum class RenderBackend { OpenGL, Vulkan };
@@ -19,9 +31,16 @@ public:
     Scene() = default;
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;
+    bool beginLoad(const QStringList& paths);
+    void reportLoadProgress(int percent);
+    void acceptLoadResult(bool ok, const QString& error, std::shared_ptr<Mesh> mesh);
+    void finishUpload();
+    bool isLoading() const { return m_loadStage==LoadStage::Reading || m_loadStage==LoadStage::Uploading; }
     void setMesh(Mesh mesh, const QString& path = QString());
     void clear();
     void resetView();
+    SceneChanges& changes() { return m_changes; }
+    const SceneChanges& changes() const { return m_changes; }
 
     EditController& editor() { return m_editor; }
     const EditController& editor() const { return m_editor; }
@@ -115,18 +134,24 @@ public:
     void finishEdit(EditController::ChangePolicy policy);
 
 protected:
+    virtual void resetInputState() {}
+    virtual QString meshAvailabilityError() const { return {}; }
+    virtual void notifyLoadStarted() {}
+    virtual void notifyLoadProgress(int) {}
+    virtual void notifyMeshLoaded(const QString&) {}
+    virtual void notifyLoadFailed(const QString&) {}
+    virtual void notifyLoadUnavailable(const QString& message) { notifyLoadFailed(message); }
+    virtual void notifyLoadFinished() {}
     virtual void transformModeChanged() {}
-    virtual void antialiasingChanged() {}
-    virtual void mipmapsChanged(bool) {}
     virtual QTimer* redrawTimer() { return nullptr; }
-    virtual void transformsChanged() {}
-    virtual void visibilityChanged(int, bool) {}
-    virtual void pipelineOptionsChanged() {}
-    virtual void overlaysChanged() {}
     virtual void notifyHistoryChanged(bool, bool) {}
     virtual void notifySelectionChanged(int, bool) {}
 
 private:
+    enum class LoadStage { Idle, Reading, Uploading, Discarding };
+    LoadStage m_loadStage = LoadStage::Idle;
+    QString m_loadPath;
+    SceneChanges m_changes;
     bool m_tileFramePending = true;
     QMatrix4x4 m_tileView, m_tileProjection;
     void syncEditObjects();
