@@ -145,8 +145,9 @@
 			
 		initializeGL初始化函数表 着色器 GLRenderer和辅助绘制资源
 		loadMeshAsync负责线程连接与请求派发，结果交给Scene公共流程
-		paintGL在当前上下文中同步资源，计算矩阵并绘制模型及辅助内容
-		syncResources消费SceneChanges
+		渲染循环 paintGL() override
+		
+		渲染前延迟更新 syncResources消费SceneChanges
 			mesh：清旧资源 → 普通模型upload → 释放CPU几何 → finishUpload
 			textures：同步Mipmap；objects：同步变换/可见性；grid/gizmo：更新辅助几何
 		鼠标键盘处理相机和编辑；离屏颜色ID拾取，处理DPI和Y翻转

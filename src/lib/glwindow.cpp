@@ -126,7 +126,7 @@ void GLWindow::resizeGL(int w, int h) {
 
 void GLWindow::paintGL() {
     auto& gl = GLFunctions::instance();
-    m_frameDrawCalls = 0;
+    m_frameDrawCalls = 0; //本帧绘制调用计数
     syncResources();
     options().antialiasing ? gl.glEnable(GL_MULTISAMPLE) : gl.glDisable(GL_MULTISAMPLE);
     options().depthTest ? gl.glEnable(GL_DEPTH_TEST) : gl.glDisable(GL_DEPTH_TEST);
@@ -376,24 +376,25 @@ void GLWindow::syncObjects() {
     }
 }
 
-// Called with the rendering context current; event handlers only invalidate state.
+//渲染前延迟更新
 void GLWindow::syncResources() {
     if(!m_renderer) return;
+    //读取并清除标志位，更新模型
     if(std::exchange(changes().mesh,false)) {
-        // Clear old resources before applying texture options to the new mesh.
-        m_renderer->clear();
+        m_renderer->clear();//释放gpu顶点/索引/纹理
         m_renderer->setMipmapsEnabled(options().mipmaps);
-        if(!tiled()) m_renderer->upload(mesh());
-        changes().textures=false;
-        if(!tiled()) mesh().releaseGeometry();
-        finishUpload();
+        if(!tiled()) m_renderer->upload(mesh());//mesh上传gpu
+        changes().textures=false;//更新纹理标志
+        if(!tiled()) mesh().releaseGeometry();//释放cpu顶点/索引
+        finishUpload();//发信号
     }
+    //更新mipmap选项
     if(std::exchange(changes().textures,false)) {
         m_renderer->setMipmapsEnabled(options().mipmaps);
     }
     syncObjects();
-    if(std::exchange(changes().grid,false)) rebuildGrid();
-    if(std::exchange(changes().gizmo,false)) rebuildGizmo();
+    if(std::exchange(changes().grid,false)) rebuildGrid();//重建背景网格
+    if(std::exchange(changes().gizmo,false)) rebuildGizmo();//重建操作器
 }
 
 void GLWindow::syncTileBounds() {
@@ -540,7 +541,7 @@ void GLWindow::pickAt(const QPoint& pos) {
         return;
         }
     bool hit = false;
-    syncObjects();
+    //syncObjects();
     makeCurrent(); //Qt6返回void 直接使上下文当前
     auto& gl = GLFunctions::instance();
     // 侧栏布局变化后拾取目标可能为空或尺寸过期，点击时按实际视口重建。
